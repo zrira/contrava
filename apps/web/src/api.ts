@@ -1,7 +1,8 @@
-export interface TrackedApi { id: string; name: string; specUrl: string; status: string; lastCheckedAt: string | null; createdAt: string; currentVersionHash: string | null; breakingChangesCount: number }
+export interface TrackedApi { id: string; name: string; specUrl: string; status: string; lastCheckedAt: string | null; createdAt: string; currentVersionHash: string | null; breakingChangesCount: number; scanEnabled: boolean; scanIntervalMinutes: number; nextScanAt: string | null }
 export interface Scan { id: string; apiId: string; status: string; startedAt: string; completedAt: string | null; error: string | null; api?: { id: string; name: string } }
 export interface Change { id: string; currentSnapshotId: string; severity: 'NON_BREAKING' | 'POTENTIALLY_BREAKING' | 'BREAKING'; category: string; path: string; method: string | null; description: string; createdAt: string }
 export interface Snapshot { id: string; apiId: string; contentHash: string; createdAt: string; currentChanges: Change[] }
+export interface ScanJob { id: string; apiId: string; status: string; source: string; attempt: number; maxAttempts: number; scheduledFor: string; claimedAt: string | null; startedAt: string | null; completedAt: string | null; failedAt: string | null; lastError: string | null; createdAt: string; api?: { id: string; name: string } }
 export interface WorkerHealth { name: string; status: 'HEALTHY' | 'UNAVAILABLE'; latencyMs?: number; error?: string }
 
 const baseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
@@ -19,7 +20,10 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
 export const listApis = () => apiRequest<TrackedApi[]>('/apis');
 export const getApi = (id: string) => apiRequest<TrackedApi>(`/apis/${id}`);
 export const createApi = (body: { name: string; specUrl: string }) => apiRequest<TrackedApi>('/apis', { method: 'POST', body: JSON.stringify(body) });
-export const runScan = (id: string) => apiRequest<Scan>(`/apis/${id}/scan`, { method: 'POST' });
+export const runScan = (id: string) => apiRequest<{ jobId: string; status: string }>(`/apis/${id}/scan`, { method: 'POST' });
+export const updateSchedule = (id: string, body: { scanEnabled: boolean; scanIntervalMinutes: number }) => apiRequest<TrackedApi>(`/apis/${id}/schedule`, { method: 'PATCH', body: JSON.stringify(body) });
+export const listJobs = (status?: string) => apiRequest<ScanJob[]>(`/jobs${status ? `?status=${status}` : ''}`);
+export const listApiJobs = (id: string) => apiRequest<ScanJob[]>(`/apis/${id}/jobs`);
 export const listScans = () => apiRequest<Scan[]>('/scans');
 export const listChanges = (id: string) => apiRequest<Change[]>(`/apis/${id}/changes`);
 export const listSnapshots = (id: string) => apiRequest<Snapshot[]>(`/apis/${id}/snapshots`);
