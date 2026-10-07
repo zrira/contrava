@@ -1,0 +1,14 @@
+import { MiddlewareConsumer, Module, type NestModule } from '@nestjs/common';
+import { ApisModule } from './apis/apis.module';
+import { ChangesModule } from './changes/changes.module';
+import { CorrelationIdMiddleware } from './common/correlation-id.middleware';
+import { HealthModule } from './health/health.module';
+import { PrismaModule } from './prisma/prisma.module';
+import { ScansModule } from './scans/scans.module';
+import { SnapshotsModule } from './snapshots/snapshots.module';
+import { WorkersModule } from './workers/workers.module';
+
+@Module({ imports: [PrismaModule, ApisModule, SnapshotsModule, ChangesModule, ScansModule, WorkersModule, HealthModule] })
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void { consumer.apply(CorrelationIdMiddleware).forRoutes('*'); }
+}
