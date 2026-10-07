@@ -10,3 +10,5 @@ apps/api/prisma/*.db-journal
 apps/api/prisma/*.db-shm
 apps/api/prisma/*.db-wal
 .DS_Store
+*.tsbuildinfo
+apps/web/dist-config/
