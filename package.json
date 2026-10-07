@@ -5,7 +5,7 @@
   "description": "API contracts that watch themselves.",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "concurrently -n web,api,spec,scan -c cyan,green,yellow,magenta \"npm run dev -w @contrava/web\" \"npm run dev -w @contrava/api\" \"npm run dev -w @contrava/spec-worker\" \"npm run dev -w @contrava/scan-worker\"",
+    "dev": "node scripts/dev.mjs",
     "build": "npm run build -w @contrava/shared && npm run build -w @contrava/api && npm run build -w @contrava/spec-worker && npm run build -w @contrava/scan-worker && npm run build -w @contrava/web",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run build -w @contrava/shared && npm run typecheck --workspaces --if-present",
@@ -17,7 +17,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
-    "concurrently": "^9.2.1",
     "eslint": "^9.39.1",
     "globals": "^16.5.0",
     "prettier": "^3.6.2",

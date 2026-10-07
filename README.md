@@ -22,7 +22,7 @@ Contrava monitors OpenAPI contracts and reports breaking changes before they sur
 
 ```bash
 npm install
-cp .env.example .env
+cp apps/api/.env.example apps/api/.env
 npm run db:generate
 npm run db:migrate
 npm run dev
@@ -37,12 +37,7 @@ npm run dev -w @contrava/spec-worker
 npm run dev -w @contrava/scan-worker
 ```
 
-Environment variables from `.env` are not automatically loaded by every process. Export them in your shell, use a tool such as `dotenvx`, or rely on the documented localhost defaults. Prisma reads `apps/api/.env` as well; for the default database, create it with:
-
-```bash
-printf 'DATABASE_URL="file:./dev.db"\n' > apps/api/.env
-npm run db:migrate
-```
+Prisma loads `apps/api/.env`. Runtime services use the documented localhost defaults; to override them, export values from the root `.env.example` in your shell before `npm run dev`.
 
 ### Try the scan flow
 
