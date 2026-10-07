@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model TrackedApi {
+  id            String        @id @default(uuid())
+  name          String
+  specUrl       String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  lastCheckedAt DateTime?
+  status        String        @default("PENDING")
+  snapshots     ApiSnapshot[]
+  changes       ApiChange[]
+  scans         Scan[]
+}
+
+model ApiSnapshot {
+  id        String      @id @default(uuid())
+  apiId     String
+  contentHash String
+  rawSpec   String
+  createdAt DateTime    @default(now())
+  api       TrackedApi  @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  previousChanges ApiChange[] @relation("PreviousSnapshot")
+  currentChanges  ApiChange[] @relation("CurrentSnapshot")
+
+  @@unique([apiId, contentHash])
+  @@index([apiId, createdAt])
+}
+
+model ApiChange {
+  id                 String      @id @default(uuid())
+  apiId              String
+  previousSnapshotId String
+  currentSnapshotId  String
+  severity           String
+  category           String
+  path               String
+  method             String?
+  description        String
+  createdAt          DateTime    @default(now())
+  api                 TrackedApi @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  previousSnapshot   ApiSnapshot @relation("PreviousSnapshot", fields: [previousSnapshotId], references: [id], onDelete: Cascade)
+  currentSnapshot    ApiSnapshot @relation("CurrentSnapshot", fields: [currentSnapshotId], references: [id], onDelete: Cascade)
+
+  @@index([apiId, createdAt])
+  @@unique([previousSnapshotId, currentSnapshotId, category, path, method, description])
+}
+
+model Scan {
+  id          String      @id @default(uuid())
+  apiId       String
+  status      String      @default("RUNNING")
+  startedAt   DateTime    @default(now())
+  completedAt DateTime?
+  error       String?
+  createdAt   DateTime    @default(now())
+  api         TrackedApi  @relation(fields: [apiId], references: [id], onDelete: Cascade)
+
+  @@index([apiId, createdAt])
+}
+
+model Worker {
+  id         String   @id @default(uuid())
+  name       String   @unique
+  type       String
+  baseUrl    String
+  lastSeenAt DateTime?
+  status     String   @default("UNKNOWN")
+}
