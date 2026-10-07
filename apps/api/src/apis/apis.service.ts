@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import type { UpdateScheduleDto } from '../scheduler/schedule.dto';
 import type { CreateApiDto, UpdateApiDto } from './dto';
 
 @Injectable()
@@ -24,6 +25,18 @@ export class ApisService {
   async update(id: string, data: UpdateApiDto) {
     await this.get(id);
     return this.prisma.trackedApi.update({ where: { id }, data: data as Prisma.TrackedApiUpdateInput });
+  }
+
+  async updateSchedule(id: string, data: UpdateScheduleDto) {
+    await this.get(id);
+    return this.prisma.trackedApi.update({
+      where: { id },
+      data: {
+        scanEnabled: data.scanEnabled,
+        scanIntervalMinutes: data.scanIntervalMinutes,
+        nextScanAt: data.scanEnabled ? new Date() : null,
+      },
+    });
   }
 
   async remove(id: string) { await this.get(id); await this.prisma.trackedApi.delete({ where: { id } }); }
