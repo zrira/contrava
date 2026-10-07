@@ -164,7 +164,7 @@ export class JobsService {
       });
       return transaction.scanJob.update({
         where: { id },
-        data: { status: 'COMPLETED', completedAt, failedAt: null, lastError: null, leaseExpiresAt: null },
+        data: { status: 'COMPLETED', completedAt, failedAt: null, lastError: null, leaseExpiresAt: null, claimToken: null, runnerId: null },
       });
     });
   }
