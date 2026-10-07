@@ -4,64 +4,91 @@
 
 ```mermaid
 flowchart TD
-  Browser[React web :5173] -->|REST + x-request-id| API[NestJS API :3000]
-  API -->|POST /fetch-spec| Spec[Express spec-worker :3001]
-  API -->|POST /diff| Scan[Express scan-worker :3002]
+  Browser[React web :5173] -->|public REST| API[NestJS API :3000]
   API --> DB[(SQLite)]
+  Scheduler[NestJS scheduler] --> API
+  API --> Queue[(ScanJob table)]
+  Runner[Express scan-runner :3003] -->|internal job REST| API
+  Runner -->|POST /fetch-spec| Spec[Express spec-worker :3001]
+  Runner -->|POST /diff| Diff[Express scan-worker :3002]
 ```
 
-React is used because the product is an interactive dashboard whose server state maps naturally to TanStack Query. React Router keeps each workflow addressable without introducing a larger state framework.
+React provides the dashboard, schedule controls, and job visibility. TanStack Query owns remote state and React Router keeps workflows addressable. NestJS is the control plane and sole owner of SQLite. It validates public and internal HTTP contracts, schedules work, coordinates leases, and transactionally persists scan output. The lightweight Express workers remain independently startable.
 
-NestJS is the application control plane. Modules make ownership of tracked APIs, snapshots, changes, scans, worker clients, and health explicit. Dependency injection keeps orchestration testable, validation pipes protect HTTP DTOs, and middleware establishes correlation IDs. Nest uses its default Express adapter.
+The scan-runner is a separate polling process. It never opens SQLite: claims, heartbeats, results, and failures all pass through explicitly marked `/internal/jobs` endpoints. This keeps database ownership in the API while allowing multiple runner processes.
 
-The two workers use Express directly. Their APIs are small, stateless, and deliberately expose the underlying Node.js mechanics instead of needing Nest's application structure. Native `fetch`, `AbortController`, `URL`, `crypto`, timers, HTTP servers, environment variables, and process signals are used for fetching, hashing, timeouts, startup, and graceful shutdown.
+Native Node.js APIs remain visible: `fetch` and `AbortController` implement bounded calls, `crypto` creates request/claim IDs, `os.hostname` contributes runner identity, timers drive polling/heartbeats/scheduling, and process signals initiate graceful shutdown.
 
-## Scan request flow
+## Scheduled scan flow
 
 ```mermaid
 sequenceDiagram
-  participant W as React
-  participant A as NestJS API
+  participant S as NestJS scheduler
+  participant DB as SQLite / ScanJob
+  participant R as scan-runner
   participant F as spec-worker
   participant D as scan-worker
-  participant DB as SQLite
-  W->>A: POST /apis/:id/scan
-  A->>DB: Create RUNNING Scan
-  A->>F: POST /fetch-spec (same request ID)
-  F-->>A: normalized spec + SHA-256 hash
-  A->>DB: Read latest snapshot
-  alt first scan
-    A->>DB: Transaction: snapshot + complete scan
-  else unchanged hash
-    A->>DB: Complete scan (no snapshot/diff)
-  else changed hash
-    A->>D: POST /diff (same request ID)
-    D-->>A: classified changes
-    A->>DB: Transaction: snapshot + changes + complete scan
+  participant A as NestJS internal API
+  S->>DB: Find due enabled API
+  S->>DB: Transaction: create unique scheduled job + advance nextScanAt
+  R->>A: POST /internal/jobs/claim
+  A->>DB: Conditional claim + lease + attempt increment
+  A-->>R: Job, claim token, API, previous snapshot
+  R->>A: POST /internal/jobs/:id/start
+  loop while active
+    R->>A: heartbeat extends lease
   end
-  A-->>W: Scan result
+  R->>F: Fetch and normalize OpenAPI
+  F-->>R: document + deterministic hash
+  opt changed baseline
+    R->>D: Diff previous/current documents
+    D-->>R: classified changes
+  end
+  R->>A: POST /internal/jobs/:id/complete
+  A->>DB: Transaction: idempotent snapshot/changes + complete scan/job
 ```
 
-Every service-to-service call has an abort timeout. Transient failures are attempted at most three times, with 250 ms and 500 ms waits. Worker 4xx responses are not retried. The API-generated or caller-provided `x-request-id` is propagated to both workers and included in structured request logs.
+Manual **Scan now** requests enter the same queue and follow the same path. There is no second synchronous implementation.
 
-The changed snapshot is written only after diffing succeeds, and snapshot/change writes happen in one transaction. If the diff worker fails, the scan is marked `FAILED` while the previous baseline remains authoritative. A retry is therefore safe. `(apiId, contentHash)` is unique, and unchanged hashes bypass persistence, preventing duplicate snapshots and changes in normal operation.
+## Job state and ownership
 
-## Persistence
+```mermaid
+stateDiagram-v2
+  [*] --> PENDING
+  PENDING --> CLAIMED: claim / attempt + 1
+  RETRY_SCHEDULED --> CLAIMED: due claim / attempt + 1
+  CLAIMED --> RUNNING: start
+  RUNNING --> COMPLETED: persist result
+  CLAIMED --> RETRY_SCHEDULED: failure, attempts remain
+  RUNNING --> RETRY_SCHEDULED: failure, attempts remain
+  CLAIMED --> FAILED: failure, max attempts
+  RUNNING --> FAILED: failure, max attempts
+  CLAIMED --> CLAIMED: expired lease reclaimed
+  RUNNING --> CLAIMED: expired lease reclaimed
+```
 
-The NestJS application owns SQLite through Prisma:
+A claim stores a random token, runner ID, claim time, and lease expiry. Selection and a conditional update execute in one SQLite transaction. Competing runners may both observe polling opportunities, but only one conditional update can acquire a particular job. Lifecycle calls must present the current token. A heartbeat extends only an unexpired lease. If a runner disappears, another runner can reclaim the job after expiry and receives a new token; stale completion is rejected.
 
-- `TrackedApi`: registration, URL, status, and last-check time.
-- `ApiSnapshot`: immutable raw normalized document and deterministic hash.
-- `ApiChange`: classified difference between two snapshots.
-- `Scan`: lifecycle and failure details for an attempt.
-- `Worker`: durable shape reserved for later registration/heartbeats; phase one health is live.
+Claims increment `attempt`. Failures use deterministic durable delays: 5 seconds after attempt one and 15 seconds after attempt two. At `maxAttempts`, the job becomes terminally `FAILED`. Small HTTP retries handle transient transport errors; they do not replace persisted job retries.
 
-SQLite is appropriate for a local, single-control-plane learning phase: it is inspectable, requires no separate server, and supports the needed transactions and constraints. It is not intended for horizontally scaled writers. PostgreSQL is the next durable store once concurrency demands it.
+The runner claims only while `activeJobs < MAX_CONCURRENT_JOBS`. It does not preload an in-memory queue, so `ScanJob` remains the source of truth and provides basic backpressure. Multiple runner processes can share that source safely.
 
-Workers are stateless and never open the control-plane database. As the system grows, each service that needs durable state should own its schema and expose behavior over a contract. This avoids a shared-database coupling that would make independent deployment and schema evolution unsafe.
+## Scheduling and duplicate prevention
 
-## Distributed-system boundaries
+Enabling a schedule sets `nextScanAt` to now. Every scheduler tick reads a bounded set of due APIs. For each, a transaction conditionally advances the exact due timestamp and creates a job with a unique key made from API ID and scheduling slot. Concurrent/repeated ticks therefore cannot create the same slot twice. Missed intervals are skipped rather than producing an unbounded catch-up burst.
 
-Distributed concerns already appear despite local deployment: unavailable workers, malformed remote documents, slow networks, retries, duplicate requests, partial failure, health aggregation, and cross-service log correlation. The implementation keeps those policies visible rather than hiding them in a generic framework. Later phases can introduce asynchronous delivery and tracing after the synchronous behavior is understood.
+## Idempotency and failure recovery
 
-The shared package contains only wire-level contracts such as severities, diff results, OpenAPI response types, and worker health. Database models and internal services remain private to their owners.
+`(apiId, contentHash)` remains unique. Completion first checks for an existing hash, so repeated completion cannot duplicate a snapshot. A completed job accepts duplicate completion calls as success. Snapshot, changes, scan status, API status, and job completion are written transactionally. The completion also verifies the runner's previous snapshot baseline; concurrent baseline movement causes a retry instead of applying a stale diff.
+
+On graceful runner shutdown, new claims stop, active jobs receive a configurable grace period, and heartbeats continue while those jobs finish. If the process is killed or grace expires, unfinished jobs retain their leases; another runner recovers them after expiry.
+
+## Why this is not a full message queue
+
+SQLite supplies durable rows and transactions, but there is no broker push delivery, acknowledgement protocol, routing, partitioning, dead-letter queue, or high-throughput concurrent writer design. Polling adds latency and database load. This implementation is intentionally useful for learning: leases, ownership, retries, idempotency, backpressure, and crash recovery are explicit and inspectable.
+
+A future Redis/BullMQ or RabbitMQ phase would replace job polling, broker delivery, acknowledgements, retry timing, and dead-letter handling. NestJS would still own product state and idempotent result persistence; deterministic OpenAPI workers would remain separate.
+
+## Persistence boundaries
+
+The NestJS API owns `TrackedApi`, `ApiSnapshot`, `ApiChange`, `Scan`, `ScanJob`, and `Worker` data. SQLite remains suitable for one local control-plane writer and transparent learning, not horizontally scaled production writes. Workers and runners do not share the database. PostgreSQL is the next storage phase before a production-grade external queue.
