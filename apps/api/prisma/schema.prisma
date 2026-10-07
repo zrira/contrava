@@ -14,10 +14,14 @@ model TrackedApi {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   lastCheckedAt DateTime?
-  status        String        @default("PENDING")
-  snapshots     ApiSnapshot[]
-  changes       ApiChange[]
-  scans         Scan[]
+  status              String        @default("PENDING")
+  scanEnabled         Boolean       @default(false)
+  scanIntervalMinutes Int           @default(60)
+  nextScanAt          DateTime?
+  snapshots           ApiSnapshot[]
+  changes             ApiChange[]
+  scans               Scan[]
+  jobs                ScanJob[]
 }
 
 model ApiSnapshot {
@@ -56,14 +60,43 @@ model ApiChange {
 model Scan {
   id          String      @id @default(uuid())
   apiId       String
+  jobId       String?     @unique
   status      String      @default("RUNNING")
   startedAt   DateTime    @default(now())
   completedAt DateTime?
   error       String?
   createdAt   DateTime    @default(now())
   api         TrackedApi  @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  job         ScanJob?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([apiId, createdAt])
+}
+
+model ScanJob {
+  id             String      @id @default(uuid())
+  apiId          String
+  status         String      @default("PENDING")
+  source         String      @default("MANUAL")
+  scheduleKey    String?     @unique
+  attempt        Int         @default(0)
+  maxAttempts    Int         @default(3)
+  scheduledFor   DateTime    @default(now())
+  claimedAt      DateTime?
+  startedAt      DateTime?
+  leaseExpiresAt DateTime?
+  claimToken     String?
+  runnerId       String?
+  completedAt    DateTime?
+  failedAt       DateTime?
+  lastError      String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  api            TrackedApi  @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  scan           Scan?
+
+  @@index([status, scheduledFor])
+  @@index([apiId, createdAt])
+  @@index([leaseExpiresAt])
 }
 
 model Worker {

@@ -67,6 +67,35 @@ export interface WorkerHealth {
   error?: string;
 }
 
+export const jobStatuses = [
+  'PENDING',
+  'CLAIMED',
+  'RUNNING',
+  'COMPLETED',
+  'FAILED',
+  'RETRY_SCHEDULED',
+] as const;
+export type JobStatus = (typeof jobStatuses)[number];
+
+export interface ClaimedJob {
+  id: string;
+  apiId: string;
+  specUrl: string;
+  attempt: number;
+  maxAttempts: number;
+  claimToken: string;
+  leaseExpiresAt: string;
+  previousSnapshot: { id: string; contentHash: string; spec: OpenApiDocument } | null;
+}
+
+export interface CompleteJobRequest {
+  claimToken: string;
+  hash: string;
+  spec: OpenApiDocument;
+  previousSnapshotId: string | null;
+  changes: ContractChange[];
+}
+
 export interface ErrorResponse {
   error: { code: string; message: string; requestId?: string };
 }
