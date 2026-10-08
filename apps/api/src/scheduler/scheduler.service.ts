@@ -36,19 +36,21 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
 
   private enqueueDue(apiId: string, now: Date): Promise<boolean> {
     return this.prisma.$transaction(async (transaction) => {
-      const api = await transaction.trackedApi.findUnique({ where: { id: apiId } });
-      if (!api?.scanEnabled || !api.nextScanAt || api.nextScanAt > now) return false;
+      const [api] = await transaction.$queryRaw<Array<{ id: string; nextScanAt: Date; scanIntervalMinutes: number }>>`
+        SELECT "id", "nextScanAt", "scanIntervalMinutes"
+        FROM "TrackedApi"
+        WHERE "id" = ${apiId}::uuid
+          AND "scanEnabled" = true
+          AND "nextScanAt" <= ${now}
+        FOR UPDATE
+      `;
+      if (!api) return false;
       const scheduleKey = `${api.id}:${api.nextScanAt.toISOString()}`;
-      const nextBase = api.nextScanAt > now ? api.nextScanAt : now;
-      const nextScanAt = new Date(nextBase.getTime() + api.scanIntervalMinutes * 60_000);
-      const advanced = await transaction.trackedApi.updateMany({
-        where: { id: api.id, scanEnabled: true, nextScanAt: api.nextScanAt },
-        data: { nextScanAt },
-      });
-      if (advanced.count !== 1) return false;
+      const nextScanAt = new Date(now.getTime() + api.scanIntervalMinutes * 60_000);
       await transaction.scanJob.create({
         data: { apiId: api.id, source: 'SCHEDULED', scheduleKey, scheduledFor: now, maxAttempts: this.maxAttempts },
       });
+      await transaction.trackedApi.update({ where: { id: api.id }, data: { nextScanAt } });
       return true;
     });
   }

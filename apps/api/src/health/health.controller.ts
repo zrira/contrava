@@ -1,7 +1,18 @@
 import { Controller, Get } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+
 @Controller('health')
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
-  @Get() async health() { await this.prisma.$queryRaw`SELECT 1`; return { status: 'ok', service: 'api', database: 'connected' }; }
+
+  @Get()
+  async health() {
+    const started = performance.now();
+    await this.prisma.$queryRaw`SELECT 1`;
+    return {
+      status: 'ok',
+      service: 'api',
+      database: { status: 'HEALTHY', latencyMs: Math.round(performance.now() - started) },
+    };
+  }
 }
