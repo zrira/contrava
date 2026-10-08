@@ -11,6 +11,10 @@ interface ClaimedRow {
 export class JobRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  async lockApiForSnapshot(transaction: Prisma.TransactionClient, apiId: string): Promise<void> {
+    await transaction.$queryRaw`SELECT "id" FROM "TrackedApi" WHERE "id" = ${apiId}::uuid FOR UPDATE`;
+  }
+
   /** PostgreSQL row locks make concurrent consumers skip work already being claimed. */
   claimBatch(runnerId: string, limit: number, leaseMs: number) {
     const capacity = Math.max(1, Math.min(50, Math.trunc(limit)));

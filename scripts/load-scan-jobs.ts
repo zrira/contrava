@@ -25,6 +25,7 @@ function percentile(values: number[], fraction: number): number {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)]!;
 }
 
+async function main(): Promise<void> {
 const existingApiId = args.get('api-id');
 const apiId = existingApiId ?? (await request<{ id: string }>('/apis', {
   name: `Load test ${new Date().toISOString()}`,
@@ -79,3 +80,9 @@ console.log(JSON.stringify({
   averageExecutionLatencyMs: Number(average(executionLatencies).toFixed(2)),
   p95ExecutionLatencyMs: Number(percentile(executionLatencies, 0.95).toFixed(2)),
 }, null, 2));
+}
+
+void main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exitCode = 1;
+});

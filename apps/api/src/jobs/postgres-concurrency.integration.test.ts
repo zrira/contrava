@@ -35,6 +35,18 @@ describe('PostgreSQL concurrent job claiming', () => {
     expect(claims.flat()).toHaveLength(1);
   });
 
+  it('serializes concurrent completions for the same API snapshot', async () => {
+    const api = await createApi();
+    await prisma.scanJob.createMany({ data: [{ apiId: api.id }, { apiId: api.id }] });
+    const jobs = await repository.claimBatch('completion-runner', 2, 30_000);
+    const service = new JobsService(prisma as never, repository);
+    await Promise.all(jobs.map((job) => service.start(job.id, job.claimToken, job.runnerId)));
+    const result = { hash: 'b'.repeat(64), spec: { openapi: '3.1.0' }, previousSnapshotId: null, changes: [] };
+    await Promise.all(jobs.map((job) => service.complete(job.id, { ...result, claimToken: job.claimToken, runnerId: job.runnerId })));
+    expect(await prisma.apiSnapshot.count({ where: { apiId: api.id } })).toBe(1);
+    expect(await prisma.scanJob.count({ where: { apiId: api.id, status: 'COMPLETED' } })).toBe(2);
+  });
+
   it('reclaims an expired lease exactly once and rejects the old owner', async () => {
     const api = await createApi();
     const original = await prisma.scanJob.create({ data: { apiId: api.id, status: 'RUNNING', attempt: 1, claimToken: '11111111-1111-4111-8111-111111111111', runnerId: 'runner-old', leaseExpiresAt: new Date(Date.now() - 1000) } });

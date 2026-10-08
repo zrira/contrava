@@ -118,6 +118,8 @@ export class JobsService {
         throw new ConflictException('Job is not held by this runner');
       }
 
+      // Serialize snapshot-baseline mutation per API while keeping worker HTTP calls outside this transaction.
+      await this.repository.lockApiForSnapshot(transaction, job.apiId);
       const existing = await transaction.apiSnapshot.findUnique({ where: { apiId_contentHash: { apiId: job.apiId, contentHash: result.hash } } });
       if (!existing) {
         const latest = await transaction.apiSnapshot.findFirst({ where: { apiId: job.apiId }, orderBy: { createdAt: 'desc' } });
