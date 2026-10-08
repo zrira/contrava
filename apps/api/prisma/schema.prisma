@@ -3,34 +3,75 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+enum ApiStatus {
+  PENDING
+  ACTIVE
+  ERROR
+}
+
+enum ScanStatus {
+  RUNNING
+  RETRY_SCHEDULED
+  COMPLETED
+  FAILED
+}
+
+enum ScanJobStatus {
+  PENDING
+  CLAIMED
+  RUNNING
+  RETRY_SCHEDULED
+  COMPLETED
+  FAILED
+}
+
+enum ScanJobSource {
+  MANUAL
+  SCHEDULED
+}
+
+enum ChangeSeverity {
+  NON_BREAKING
+  POTENTIALLY_BREAKING
+  BREAKING
+}
+
+enum WorkerStatus {
+  UNKNOWN
+  HEALTHY
+  UNAVAILABLE
+}
+
 model TrackedApi {
-  id            String        @id @default(uuid())
-  name          String
-  specUrl       String
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  lastCheckedAt DateTime?
-  status              String        @default("PENDING")
+  id                  String        @id @default(uuid()) @db.Uuid
+  name                String        @db.VarChar(120)
+  specUrl             String
+  createdAt           DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime      @updatedAt @db.Timestamptz(3)
+  lastCheckedAt       DateTime?     @db.Timestamptz(3)
+  status              ApiStatus     @default(PENDING)
   scanEnabled         Boolean       @default(false)
   scanIntervalMinutes Int           @default(60)
-  nextScanAt          DateTime?
+  nextScanAt          DateTime?     @db.Timestamptz(3)
   snapshots           ApiSnapshot[]
   changes             ApiChange[]
   scans               Scan[]
   jobs                ScanJob[]
+
+  @@index([scanEnabled, nextScanAt])
 }
 
 model ApiSnapshot {
-  id        String      @id @default(uuid())
-  apiId     String
-  contentHash String
-  rawSpec   String
-  createdAt DateTime    @default(now())
-  api       TrackedApi  @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  id              String      @id @default(uuid()) @db.Uuid
+  apiId           String      @db.Uuid
+  contentHash     String      @db.VarChar(64)
+  rawSpec         Json        @db.JsonB
+  createdAt       DateTime    @default(now()) @db.Timestamptz(3)
+  api             TrackedApi  @relation(fields: [apiId], references: [id], onDelete: Cascade)
   previousChanges ApiChange[] @relation("PreviousSnapshot")
   currentChanges  ApiChange[] @relation("CurrentSnapshot")
 
@@ -39,33 +80,33 @@ model ApiSnapshot {
 }
 
 model ApiChange {
-  id                 String      @id @default(uuid())
-  apiId              String
-  previousSnapshotId String
-  currentSnapshotId  String
-  severity           String
-  category           String
+  id                 String         @id @default(uuid()) @db.Uuid
+  apiId              String         @db.Uuid
+  previousSnapshotId String         @db.Uuid
+  currentSnapshotId  String         @db.Uuid
+  severity           ChangeSeverity
+  category           String         @db.VarChar(80)
   path               String
-  method             String?
+  method             String?        @db.VarChar(12)
   description        String
-  createdAt          DateTime    @default(now())
-  api                 TrackedApi @relation(fields: [apiId], references: [id], onDelete: Cascade)
-  previousSnapshot   ApiSnapshot @relation("PreviousSnapshot", fields: [previousSnapshotId], references: [id], onDelete: Cascade)
-  currentSnapshot    ApiSnapshot @relation("CurrentSnapshot", fields: [currentSnapshotId], references: [id], onDelete: Cascade)
+  createdAt          DateTime       @default(now()) @db.Timestamptz(3)
+  api                 TrackedApi     @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  previousSnapshot   ApiSnapshot    @relation("PreviousSnapshot", fields: [previousSnapshotId], references: [id], onDelete: Cascade)
+  currentSnapshot    ApiSnapshot    @relation("CurrentSnapshot", fields: [currentSnapshotId], references: [id], onDelete: Cascade)
 
   @@index([apiId, createdAt])
   @@unique([previousSnapshotId, currentSnapshotId, category, path, method, description])
 }
 
 model Scan {
-  id          String      @id @default(uuid())
-  apiId       String
-  jobId       String?     @unique
-  status      String      @default("RUNNING")
-  startedAt   DateTime    @default(now())
-  completedAt DateTime?
+  id          String      @id @default(uuid()) @db.Uuid
+  apiId       String      @db.Uuid
+  jobId       String?     @unique @db.Uuid
+  status      ScanStatus  @default(RUNNING)
+  startedAt   DateTime    @default(now()) @db.Timestamptz(3)
+  completedAt DateTime?   @db.Timestamptz(3)
   error       String?
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
   api         TrackedApi  @relation(fields: [apiId], references: [id], onDelete: Cascade)
   job         ScanJob?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
@@ -73,37 +114,38 @@ model Scan {
 }
 
 model ScanJob {
-  id             String      @id @default(uuid())
-  apiId          String
-  status         String      @default("PENDING")
-  source         String      @default("MANUAL")
-  scheduleKey    String?     @unique
-  attempt        Int         @default(0)
-  maxAttempts    Int         @default(3)
-  scheduledFor   DateTime    @default(now())
-  claimedAt      DateTime?
-  startedAt      DateTime?
-  leaseExpiresAt DateTime?
-  claimToken     String?
+  id             String        @id @default(uuid()) @db.Uuid
+  apiId          String        @db.Uuid
+  status         ScanJobStatus @default(PENDING)
+  source         ScanJobSource @default(MANUAL)
+  scheduleKey    String?       @unique
+  attempt        Int           @default(0)
+  maxAttempts    Int           @default(3)
+  scheduledFor   DateTime      @default(now()) @db.Timestamptz(3)
+  claimedAt      DateTime?     @db.Timestamptz(3)
+  startedAt      DateTime?     @db.Timestamptz(3)
+  leaseExpiresAt DateTime?     @db.Timestamptz(3)
+  claimToken     String?       @db.Uuid
   runnerId       String?
-  completedAt    DateTime?
-  failedAt       DateTime?
+  completedAt    DateTime?     @db.Timestamptz(3)
+  failedAt       DateTime?     @db.Timestamptz(3)
   lastError      String?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
-  api            TrackedApi  @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(3)
+  api            TrackedApi    @relation(fields: [apiId], references: [id], onDelete: Cascade)
   scan           Scan?
 
-  @@index([status, scheduledFor])
+  @@index([status, scheduledFor, createdAt])
+  @@index([status, leaseExpiresAt])
   @@index([apiId, createdAt])
-  @@index([leaseExpiresAt])
+  @@index([status, createdAt])
 }
 
 model Worker {
-  id         String   @id @default(uuid())
-  name       String   @unique
+  id         String       @id @default(uuid()) @db.Uuid
+  name       String       @unique
   type       String
   baseUrl    String
-  lastSeenAt DateTime?
-  status     String   @default("UNKNOWN")
+  lastSeenAt DateTime?    @db.Timestamptz(3)
+  status     WorkerStatus @default(UNKNOWN)
 }
