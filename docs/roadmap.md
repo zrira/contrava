@@ -10,9 +10,9 @@ React/NestJS/Express services, SQLite snapshots, deterministic OpenAPI fetching 
 
 Per-API intervals, a NestJS scheduler, persisted scan jobs, a separately runnable scan-runner, conditional lease claims, heartbeats, durable retry scheduling, concurrency limits, crash recovery, job health, and queue visibility. Manual scans now use the same background path.
 
-## Phase 3 — PostgreSQL
+### Phase 3 — PostgreSQL concurrency
 
-Replace SQLite and study concurrent writers, transaction isolation, indexing, migration operations, and connection pooling. Revisit claim query behavior under real row locking.
+PostgreSQL is now the primary database. Native UUIDs, JSONB, timestamptz values, and lifecycle enums strengthen the schema. Queue consumers batch claim with `FOR UPDATE SKIP LOCKED`; scheduler rows and snapshot baselines use short row locks; stale owners are checked by runner ID and token. Integration stress tests, query-plan review, pool configuration, pagination, queue metrics, and load tooling are included.
 
 ## Phase 4 — queues
 
@@ -40,4 +40,4 @@ After the workflow proves useful, add users, organizations, projects, authentica
 
 ## Deliberately deferred
 
-PostgreSQL, Redis, BullMQ, RabbitMQ, Kafka, Docker, Kubernetes, authentication, payments, service meshes, GraphQL, WebSockets, CQRS, event sourcing, GitHub access, AI, and cloud deployment remain outside Phase 2.
+Redis, BullMQ, RabbitMQ, Kafka, Docker, Kubernetes, authentication, payments, service meshes, GraphQL, WebSockets, CQRS, event sourcing, GitHub access, AI, and cloud deployment remain outside Phase 3.

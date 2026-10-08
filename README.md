@@ -18,8 +18,19 @@ Contrava monitors OpenAPI contracts and reports breaking changes before they sur
 
 - Node.js 20 or newer
 - npm 10 or newer
+- PostgreSQL 14 or newer (tested locally with PostgreSQL 18)
 
-## Local development
+## Local PostgreSQL setup
+
+Create a local role and separate development/test databases using an administrative PostgreSQL account:
+
+```bash
+psql -d postgres -c "CREATE USER contrava WITH PASSWORD 'contrava';"
+createdb --owner=contrava contrava
+createdb --owner=contrava contrava_test
+```
+
+If the role or databases already exist, reuse them rather than recreating them. Then initialize Contrava:
 
 ```bash
 npm install
@@ -28,6 +39,8 @@ npm run db:generate
 npm run db:migrate
 npm run dev
 ```
+
+The example URL is `postgresql://contrava:contrava@localhost:5432/contrava?connection_limit=10&pool_timeout=10`. Change local credentials as needed and never commit real secrets.
 
 Open <http://localhost:5173>. All five applications can also be started independently:
 
@@ -48,20 +61,34 @@ Prisma loads `apps/api/.env`. Runtime services use the documented localhost defa
 3. Watch the persisted job move through `/jobs`; the runner creates the baseline snapshot.
 4. Change the document and queue another scan to see classified changes.
 
-Workers and the runner intentionally do not access SQLite. The runner uses the API's internal job protocol. To test recovery locally, stop a runner during a job and start another after `JOB_LEASE_MS`; to test retries, set `RUNNER_FAILURE_RATE=1` temporarily.
+Workers and the runner intentionally do not access PostgreSQL. The runner uses the API's internal job protocol. To test recovery locally, stop a runner during a job and start another after `JOB_LEASE_MS`; to test retries, set `RUNNER_FAILURE_RATE=1` temporarily.
 
 ## Useful commands
 
 ```bash
-npm test            # all unit/component tests
-npm run typecheck   # strict TypeScript checks
-npm run build       # production builds
-npm run lint        # ESLint checks
+npm test              # unit/component tests
+npm run typecheck     # strict TypeScript checks
+npm run build         # production builds
+npm run lint          # ESLint checks
 npm run format:check
+
+# Destructively resets only a database whose name contains "test"
+TEST_DATABASE_URL=postgresql://contrava:contrava@localhost:5432/contrava_test npm run test:postgres
+
+# API must be running; creates and synthetically processes jobs
+npm run load:jobs -- --jobs=1000 --runners=4
 ```
 
 The API includes `/health`, CRUD and schedules under `/apis`, asynchronous `/apis/:id/scan`, `/jobs`, snapshot/change history, `/scans`, aggregate `/workers` health, and explicitly internal `/internal/jobs/*` runner endpoints.
 
+## PostgreSQL operations
+
+Prisma manages a connection pool per API process. Configure `connection_limit` and `pool_timeout` in `DATABASE_URL`; account for every API replica when budgeting PostgreSQL sessions. PgBouncer is deliberately deferred. `/health` reports database connectivity and latency.
+
+Completed-job retention is currently policy-only: `JOB_RETENTION_DAYS=30` documents the intended horizon, but Phase 3 does not automatically delete history. Job history is paginated with `GET /jobs?page=1&pageSize=25&status=FAILED`.
+
+See [PostgreSQL concurrency](docs/postgres-concurrency.md), [performance](docs/performance.md), and [architecture](docs/architecture.md).
+
 ## Current limitations
 
-This phase uses a polling SQLite-backed job table, not a production message broker. Internal runner endpoints are intentionally unauthenticated for local learning. SQLite limits control-plane write concurrency, scheduling supports fixed intervals rather than cron, and OpenAPI `$ref` handling is limited to local document references. See [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).
+The queue still uses database polling rather than a message broker. Internal runner endpoints are intentionally unauthenticated. Scheduling supports fixed intervals rather than cron, automated retention is not enabled, and OpenAPI `$ref` handling is limited to local document references.
