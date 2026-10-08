@@ -34,10 +34,13 @@ export class JobRunner {
     try {
       while (this.accepting && this.active.size < this.options.maxConcurrentJobs) {
         const requestId = randomUUID();
-        const job = await this.api.claim(this.options.runnerId, requestId);
-        if (!job) break;
-        const task = this.runJob(job, requestId).finally(() => this.active.delete(job.id));
-        this.active.set(job.id, task);
+        const capacity = this.options.maxConcurrentJobs - this.active.size;
+        const jobs = await this.api.claim(this.options.runnerId, capacity, requestId);
+        if (jobs.length === 0) break;
+        for (const job of jobs) {
+          const task = this.runJob(job, requestId).finally(() => this.active.delete(job.id));
+          this.active.set(job.id, task);
+        }
       }
     } catch (error) {
       log('poll failed', { runnerId: this.options.runnerId, error: error instanceof Error ? error.message : 'Unknown error' });

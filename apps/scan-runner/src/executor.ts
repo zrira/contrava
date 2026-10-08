@@ -1,7 +1,7 @@
 import type { ClaimedJob, CompleteJobRequest, DiffResponse, FetchSpecResponse } from '@contrava/shared';
 import { postJson } from './http-client.js';
 
-export type JobResult = Omit<CompleteJobRequest, 'claimToken'>;
+export type JobResult = Omit<CompleteJobRequest, 'claimToken' | 'runnerId'>;
 export type JobExecutor = (job: ClaimedJob, requestId: string) => Promise<JobResult>;
 
 export function createExecutor(specWorkerUrl: string, scanWorkerUrl: string, timeoutMs: number, failureRate: number): JobExecutor {

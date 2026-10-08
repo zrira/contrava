@@ -84,12 +84,14 @@ export interface ClaimedJob {
   attempt: number;
   maxAttempts: number;
   claimToken: string;
+  runnerId: string;
   leaseExpiresAt: string;
   previousSnapshot: { id: string; contentHash: string; spec: OpenApiDocument } | null;
 }
 
 export interface CompleteJobRequest {
   claimToken: string;
+  runnerId: string;
   hash: string;
   spec: OpenApiDocument;
   previousSnapshotId: string | null;

@@ -29,30 +29,25 @@ function transactionalDb(overrides: Record<string, unknown> = {}) {
 }
 
 describe('JobsService lifecycle', () => {
-  it('claims one available job and leaves it unavailable to a second runner', async () => {
-    const available = { ...baseJob, status: 'PENDING', attempt: 0 };
-    const claimed = { ...available, attempt: 1, api: { specUrl: 'https://example.com/spec', snapshots: [] } };
-    const db = transactionalDb();
-    db.scanJob.findFirst.mockResolvedValueOnce(available).mockResolvedValueOnce(null);
-    db.scanJob.findUniqueOrThrow.mockResolvedValue(claimed);
-    const service = new JobsService(db as never);
-    await expect(service.claim('runner-1')).resolves.toMatchObject({ id: 'job-1', attempt: 1 });
-    await expect(service.claim('runner-2')).resolves.toBeNull();
-    expect(db.scanJob.updateMany).toHaveBeenCalledOnce();
+  it('delegates capacity-aware claims to the PostgreSQL repository', async () => {
+    const claimBatch = vi.fn().mockResolvedValue([{ id: 'job-1' }]);
+    const service = new JobsService(transactionalDb() as never, { claimBatch } as never);
+    await expect(service.claim('runner-1', 4)).resolves.toEqual([{ id: 'job-1' }]);
+    expect(claimBatch).toHaveBeenCalledWith('runner-1', 4, 30_000);
   });
 
-  it('includes expired leases in the claim query while active leases remain excluded', async () => {
+  it('rejects a stale heartbeat that no longer owns the row', async () => {
     const db = transactionalDb();
-    db.scanJob.findFirst.mockResolvedValue(null);
-    await new JobsService(db as never).claim('runner-2');
-    expect(db.scanJob.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { OR: expect.arrayContaining([expect.objectContaining({ status: { in: ['CLAIMED', 'RUNNING'] }, leaseExpiresAt: expect.any(Object) })]) } }));
+    db.scanJob.updateMany.mockResolvedValue({ count: 0 });
+    await expect(new JobsService(db as never, { claimBatch: vi.fn() } as never).heartbeat('job-1', 'old-token', 'old-runner')).rejects.toThrow('no longer owned');
+    expect(db.scanJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ claimToken: 'old-token', runnerId: 'old-runner' }) }));
   });
 
   it('schedules deterministic retries and increments attempts on the next claim', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2025-01-01T00:00:00Z'));
     const db = transactionalDb();
-    const result = await new JobsService(db as never).fail('job-1', 'token', 'worker unavailable');
+    const result = await new JobsService(db as never, { claimBatch: vi.fn() } as never).fail('job-1', 'token', 'runner-1', 'worker unavailable');
     expect(result).toMatchObject({ status: 'RETRY_SCHEDULED', lastError: 'worker unavailable' });
     expect(db.scanJob.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ scheduledFor: new Date('2025-01-01T00:00:05Z') }) }));
     vi.useRealTimers();
@@ -60,21 +55,26 @@ describe('JobsService lifecycle', () => {
 
   it('marks a job failed at its maximum attempt', async () => {
     const db = transactionalDb({ scanJob: { findUnique: vi.fn().mockResolvedValue({ ...baseJob, attempt: 3, maxAttempts: 3 }), update: vi.fn().mockImplementation(({ data }) => Promise.resolve(data)) } });
-    await expect(new JobsService(db as never).fail('job-1', 'token', 'still failing')).resolves.toMatchObject({ status: 'FAILED' });
+    await expect(new JobsService(db as never, { claimBatch: vi.fn() } as never).fail('job-1', 'token', 'runner-1', 'still failing')).resolves.toMatchObject({ status: 'FAILED' });
     expect(db.trackedApi.update).toHaveBeenCalledOnce();
   });
 
   it('treats duplicate completion as safe', async () => {
     const completed = { ...baseJob, status: 'COMPLETED', completedAt: new Date() };
     const db = transactionalDb({ scanJob: { findUnique: vi.fn().mockResolvedValue(completed) } });
-    await expect(new JobsService(db as never).complete('job-1', { claimToken: 'old', hash: 'hash', spec: { openapi: '3.1.0' }, previousSnapshotId: null, changes: [] })).resolves.toEqual(completed);
+    await expect(new JobsService(db as never, { claimBatch: vi.fn() } as never).complete('job-1', { claimToken: 'token', runnerId: 'runner-1', hash: 'hash', spec: { openapi: '3.1.0' }, previousSnapshotId: null, changes: [] })).resolves.toEqual(completed);
     expect(db.apiSnapshot.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects completion from a stale owner after reclaim', async () => {
+    const db = transactionalDb({ scanJob: { findUnique: vi.fn().mockResolvedValue({ ...baseJob, claimToken: 'new-token', runnerId: 'runner-2' }) } });
+    await expect(new JobsService(db as never, { claimBatch: vi.fn() } as never).complete('job-1', { claimToken: 'old-token', runnerId: 'runner-1', hash: 'hash', spec: { openapi: '3.1.0' }, previousSnapshotId: null, changes: [] })).rejects.toThrow('not held');
   });
 
   it('does not duplicate snapshots or changes when a retry hash already exists', async () => {
     const db = transactionalDb();
     db.apiSnapshot.findUnique.mockResolvedValue({ id: 'snapshot-existing' });
-    await new JobsService(db as never).complete('job-1', { claimToken: 'token', hash: 'same', spec: { openapi: '3.1.0' }, previousSnapshotId: null, changes: [] });
+    await new JobsService(db as never, { claimBatch: vi.fn() } as never).complete('job-1', { claimToken: 'token', runnerId: 'runner-1', hash: 'same', spec: { openapi: '3.1.0' }, previousSnapshotId: null, changes: [] });
     expect(db.apiSnapshot.create).not.toHaveBeenCalled();
     expect(db.apiChange.create).not.toHaveBeenCalled();
   });

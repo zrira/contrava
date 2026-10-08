@@ -3,11 +3,11 @@ import type { ClaimedJob } from '@contrava/shared';
 import type { RunnerApi } from './client.js';
 import { JobRunner } from './runner.js';
 
-const job = (id: string): ClaimedJob => ({ id, apiId: 'api-1', specUrl: 'https://example.com/spec', attempt: 1, maxAttempts: 3, claimToken: `token-${id}`, leaseExpiresAt: new Date(Date.now() + 30_000).toISOString(), previousSnapshot: null });
+const job = (id: string): ClaimedJob => ({ id, apiId: 'api-1', specUrl: 'https://example.com/spec', attempt: 1, maxAttempts: 3, claimToken: `token-${id}`, runnerId: 'runner-1', leaseExpiresAt: new Date(Date.now() + 30_000).toISOString(), previousSnapshot: null });
 
 function fakeApi(queue: ClaimedJob[]): RunnerApi & { start: ReturnType<typeof vi.fn>; complete: ReturnType<typeof vi.fn> } {
   return {
-    claim: vi.fn().mockImplementation(() => Promise.resolve(queue.shift() ?? null)),
+    claim: vi.fn().mockImplementation((_runnerId: string, maxJobs: number) => Promise.resolve(queue.splice(0, maxJobs))),
     start: vi.fn().mockResolvedValue(undefined),
     heartbeat: vi.fn().mockResolvedValue(undefined),
     complete: vi.fn().mockResolvedValue(undefined),
