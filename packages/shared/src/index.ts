@@ -77,6 +77,22 @@ export const jobStatuses = [
 ] as const;
 export type JobStatus = (typeof jobStatuses)[number];
 
+export interface ScanExecuteMessage {
+  version: 1;
+  messageId: string;
+  jobId: string;
+  apiId: string;
+  correlationId: string;
+  createdAt: string;
+}
+
+export function isScanExecuteMessage(value: unknown): value is ScanExecuteMessage {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.version === 1
+    && ['messageId', 'jobId', 'apiId', 'correlationId', 'createdAt'].every((key) => typeof candidate[key] === 'string' && candidate[key] !== '');
+}
+
 export interface ClaimedJob {
   id: string;
   apiId: string;
@@ -88,6 +104,13 @@ export interface ClaimedJob {
   leaseExpiresAt: string;
   previousSnapshot: { id: string; contentHash: string; spec: OpenApiDocument } | null;
 }
+
+export type JobDeliveryDisposition =
+  | { disposition: 'CLAIMED'; job: ClaimedJob }
+  | { disposition: 'COMPLETED' }
+  | { disposition: 'BUSY'; retryAfterMs: number }
+  | { disposition: 'TERMINAL' }
+  | { disposition: 'NOT_FOUND' };
 
 export interface CompleteJobRequest {
   claimToken: string;

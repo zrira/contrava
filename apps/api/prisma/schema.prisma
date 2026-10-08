@@ -46,6 +46,12 @@ enum WorkerStatus {
   UNAVAILABLE
 }
 
+enum OutboxStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+}
+
 model TrackedApi {
   id                  String        @id @default(uuid()) @db.Uuid
   name                String        @db.VarChar(120)
@@ -61,6 +67,7 @@ model TrackedApi {
   changes             ApiChange[]
   scans               Scan[]
   jobs                ScanJob[]
+  outboxMessages      OutboxMessage[]
 
   @@index([scanEnabled, nextScanAt])
 }
@@ -130,15 +137,42 @@ model ScanJob {
   completedAt    DateTime?     @db.Timestamptz(3)
   failedAt       DateTime?     @db.Timestamptz(3)
   lastError      String?
+  lastDeliveredAt DateTime?    @db.Timestamptz(3)
+  redeliveryCount Int          @default(0)
+  deadLetteredAt DateTime?     @db.Timestamptz(3)
   createdAt      DateTime      @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @db.Timestamptz(3)
   api            TrackedApi    @relation(fields: [apiId], references: [id], onDelete: Cascade)
   scan           Scan?
+  outboxMessages OutboxMessage[]
 
   @@index([status, scheduledFor, createdAt])
   @@index([status, leaseExpiresAt])
   @@index([apiId, createdAt])
   @@index([status, createdAt])
+}
+
+model OutboxMessage {
+  id           String       @id @default(uuid()) @db.Uuid
+  jobId        String?      @db.Uuid
+  apiId        String?      @db.Uuid
+  topic        String
+  routingKey   String
+  payload      Json         @db.JsonB
+  status       OutboxStatus @default(PENDING)
+  attemptCount Int          @default(0)
+  lockedAt     DateTime?    @db.Timestamptz(3)
+  lockToken    String?      @db.Uuid
+  publishedAt  DateTime?    @db.Timestamptz(3)
+  lastError    String?
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(3)
+  job          ScanJob?     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  api          TrackedApi?  @relation(fields: [apiId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([status, lockedAt])
+  @@index([jobId, createdAt])
 }
 
 model Worker {
