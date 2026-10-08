@@ -7,7 +7,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['apps/api/**/*.ts', 'apps/spec-worker/**/*.ts', 'apps/scan-worker/**/*.ts', 'packages/shared/**/*.ts'],
+    files: ['apps/api/**/*.ts', 'apps/spec-worker/**/*.ts', 'apps/scan-worker/**/*.ts', 'apps/scan-runner/**/*.ts', 'packages/shared/**/*.ts', 'scripts/**/*.{ts,mjs}'],
     languageOptions: { globals: globals.node },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
