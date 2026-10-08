@@ -50,7 +50,7 @@ describe('Contrava web', () => {
   });
 
   it('displays failed job details', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => response([{ id: 'failed-job', apiId: 'api-1', status: 'FAILED', source: 'SCHEDULED', attempt: 3, maxAttempts: 3, scheduledFor: '2025-01-01', claimedAt: null, startedAt: '2025-01-01', completedAt: null, failedAt: '2025-01-01', lastError: 'spec worker unavailable', createdAt: '2025-01-01', api: { id: 'api-1', name: 'Users API' } }])));
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => response({ data: [{ id: 'failed-job', apiId: 'api-1', status: 'FAILED', source: 'SCHEDULED', attempt: 3, maxAttempts: 3, scheduledFor: '2025-01-01', claimedAt: null, startedAt: '2025-01-01', completedAt: null, failedAt: '2025-01-01', lastError: 'spec worker unavailable', createdAt: '2025-01-01', api: { id: 'api-1', name: 'Users API' } }], pagination: { page: 1, pageSize: 25, total: 1, totalPages: 1 } })));
     renderAt('/jobs');
     expect(await screen.findByText('spec worker unavailable')).toBeInTheDocument();
     expect(screen.getByText('FAILED', { selector: 'span' })).toBeInTheDocument();

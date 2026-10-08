@@ -3,6 +3,8 @@ export interface Scan { id: string; apiId: string; status: string; startedAt: st
 export interface Change { id: string; currentSnapshotId: string; severity: 'NON_BREAKING' | 'POTENTIALLY_BREAKING' | 'BREAKING'; category: string; path: string; method: string | null; description: string; createdAt: string }
 export interface Snapshot { id: string; apiId: string; contentHash: string; createdAt: string; currentChanges: Change[] }
 export interface ScanJob { id: string; apiId: string; status: string; source: string; attempt: number; maxAttempts: number; scheduledFor: string; claimedAt: string | null; startedAt: string | null; completedAt: string | null; failedAt: string | null; lastError: string | null; createdAt: string; api?: { id: string; name: string } }
+export interface PaginatedJobs { data: ScanJob[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }
+export interface QueueMetrics { pending: number; retrying: number; active: number; failed: number; expiredLeases: number; oldestPendingAgeSeconds: number | null }
 export interface WorkerHealth { name: string; status: 'HEALTHY' | 'UNAVAILABLE'; latencyMs?: number; error?: string }
 
 const baseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
@@ -22,7 +24,8 @@ export const getApi = (id: string) => apiRequest<TrackedApi>(`/apis/${id}`);
 export const createApi = (body: { name: string; specUrl: string }) => apiRequest<TrackedApi>('/apis', { method: 'POST', body: JSON.stringify(body) });
 export const runScan = (id: string) => apiRequest<{ jobId: string; status: string }>(`/apis/${id}/scan`, { method: 'POST' });
 export const updateSchedule = (id: string, body: { scanEnabled: boolean; scanIntervalMinutes: number }) => apiRequest<TrackedApi>(`/apis/${id}/schedule`, { method: 'PATCH', body: JSON.stringify(body) });
-export const listJobs = (status?: string) => apiRequest<ScanJob[]>(`/jobs${status ? `?status=${status}` : ''}`);
+export const listJobs = (status?: string, page = 1, pageSize = 25) => { const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) }); if (status) query.set('status', status); return apiRequest<PaginatedJobs>(`/jobs?${query}`); };
+export const getQueueMetrics = () => apiRequest<QueueMetrics>('/jobs/metrics');
 export const listApiJobs = (id: string) => apiRequest<ScanJob[]>(`/apis/${id}/jobs`);
 export const listScans = () => apiRequest<Scan[]>('/scans');
 export const listChanges = (id: string) => apiRequest<Change[]>(`/apis/${id}/changes`);
