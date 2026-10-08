@@ -6,11 +6,11 @@
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "npm run build -w @contrava/shared && npm run build -w @contrava/api && npm run build -w @contrava/spec-worker && npm run build -w @contrava/scan-worker && npm run build -w @contrava/scan-runner && npm run build -w @contrava/web",
+    "build": "npm run build -w @contrava/shared && npm run build -w @contrava/rabbitmq && npm run build -w @contrava/api && npm run build -w @contrava/spec-worker && npm run build -w @contrava/scan-worker && npm run build -w @contrava/scan-runner && npm run build -w @contrava/web",
     "test": "npm run test --workspaces --if-present",
     "test:postgres": "node scripts/test-postgres.mjs",
     "load:jobs": "tsx scripts/load-scan-jobs.ts",
-    "typecheck": "npm run build -w @contrava/shared && npm run typecheck --workspaces --if-present && tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --strict --skipLibCheck scripts/load-scan-jobs.ts",
+    "typecheck": "npm run build -w @contrava/shared && npm run build -w @contrava/rabbitmq && npm run typecheck --workspaces --if-present && tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --strict --skipLibCheck scripts/load-scan-jobs.ts",
     "lint": "eslint scripts && npm run lint --workspaces --if-present",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
