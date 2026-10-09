@@ -36,7 +36,7 @@ function findingRule(change: Pick<ApiChange, 'category' | 'method' | 'path'>, us
 export async function createFindingsForChange(transaction: Prisma.TransactionClient, change: ApiChange): Promise<number> {
   if (change.severity === 'NON_BREAKING') return 0;
   const usages = await transaction.apiUsage.findMany({
-    where: { apiId: change.apiId, ...(change.method ? { httpMethod: change.method.toUpperCase() } : {}) },
+    where: { apiId: change.apiId, ...(change.method ? { OR: [{ httpMethod: change.method.toUpperCase() }, { httpMethod: null }] } : {}) },
     include: { sourceFile: { select: { path: true, lastIndexedCommitSha: true } } },
   });
   let created = 0;

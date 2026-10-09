@@ -283,7 +283,7 @@ model RepositoryScan {
   repository       Repository           @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   outboxMessages   OutboxMessage[]
 
-  @@unique([repositoryId, commitSha, scannerVersion])
+  @@index([repositoryId, commitSha, scannerVersion])
   @@index([status, scheduledFor])
   @@index([repositoryId, createdAt])
   @@index([status, leaseExpiresAt])

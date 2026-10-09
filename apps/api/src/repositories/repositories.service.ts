@@ -10,11 +10,21 @@ import type { CreateRepositoryDto, FailRepositoryScanDto, UsageQueryDto } from '
 const RETRY_DELAYS = [15_000, 60_000, 300_000] as const;
 const SCANNER_VERSION = '1';
 
+function safePath(path: string): boolean {
+  return path.length <= 1000 && !path.startsWith('/') && !path.includes('\\') && !path.includes('\0') && !path.split('/').includes('..');
+}
 function validFiles(value: unknown[]): value is IndexedSourceFile[] {
+  const confidences = new Set(['HIGH', 'MEDIUM', 'LOW']);
+  const matchTypes = new Set(['STATIC_LITERAL', 'TEMPLATE_LITERAL', 'STRING_CONCATENATION', 'HTTP_CLIENT_CALL', 'BASE_URL_JOIN', 'WRAPPER_CALL', 'UNKNOWN']);
   return value.every((file) => {
     if (!file || typeof file !== 'object' || Array.isArray(file)) return false;
     const candidate = file as Record<string, unknown>;
-    return typeof candidate.path === 'string' && typeof candidate.language === 'string' && typeof candidate.contentHash === 'string' && Array.isArray(candidate.usages);
+    if (typeof candidate.path !== 'string' || !safePath(candidate.path) || !['TypeScript', 'JavaScript'].includes(String(candidate.language)) || typeof candidate.contentHash !== 'string' || !/^[0-9a-f]{64}$/i.test(candidate.contentHash) || !Array.isArray(candidate.usages)) return false;
+    return candidate.usages.every((usage: unknown) => {
+      if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return false;
+      const item = usage as Record<string, unknown>;
+      return (item.httpMethod === null || typeof item.httpMethod === 'string') && typeof item.endpointPattern === 'string' && item.endpointPattern.startsWith('/') && Number.isInteger(item.line) && Number(item.line) > 0 && (item.column === null || Number.isInteger(item.column)) && typeof item.snippet === 'string' && item.snippet.length <= 1200 && typeof item.confidence === 'string' && confidences.has(item.confidence) && typeof item.matchType === 'string' && matchTypes.has(item.matchType) && item.evidence !== null && typeof item.evidence === 'object' && !Array.isArray(item.evidence);
+    });
   });
 }
 
@@ -141,7 +151,7 @@ export class RepositoriesService {
   }
 
   async complete(scanId: string, input: CompleteRepositoryScanRequest) {
-    if (!validFiles(input.files) || input.files.length > this.maxFiles || input.indexedPaths.length > this.maxFiles) throw new ConflictException('Invalid or oversized repository index result');
+    if (!validFiles(input.files) || input.files.length > this.maxFiles || input.indexedPaths.length > this.maxFiles || !input.deletedPaths.every(safePath) || !input.indexedPaths.every(safePath) || input.files.reduce((total, file) => total + file.usages.length, 0) > 100_000) throw new ConflictException('Invalid or oversized repository index result');
     return this.prisma.$transaction(async (transaction) => {
       const scan = await this.owned(transaction, scanId, input.claimToken, input.runnerId);
       if (scan.commitSha !== input.commitSha) throw new ConflictException('Repository scan commit does not match resolved commit');

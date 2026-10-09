@@ -14,7 +14,7 @@ export async function rebuildUsageAssociations(transaction: Prisma.TransactionCl
     if (!snapshot) continue;
     const operations = operationsFromSpec(snapshot.rawSpec as unknown as OpenApiDocument);
     for (const usage of canonical) {
-      if (!operations.some((operation) => operation.method === usage.httpMethod && pathsCompatible(operation.path, usage.endpointPattern))) continue;
+      if (!operations.some((operation) => (!usage.httpMethod || operation.method === usage.httpMethod) && pathsCompatible(operation.path, usage.endpointPattern))) continue;
       await transaction.apiUsage.create({ data: {
         repositoryId, sourceFileId: usage.sourceFileId, apiId: link.apiId, httpMethod: usage.httpMethod,
         endpointPattern: usage.endpointPattern, line: usage.line, column: usage.column, snippet: usage.snippet,

@@ -38,7 +38,7 @@ CREATE TABLE "RepositoryScan" (
   CONSTRAINT "RepositoryScan_repositoryId_fkey" FOREIGN KEY ("repositoryId") REFERENCES "Repository"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE UNIQUE INDEX "RepositoryScan_activeKey_key" ON "RepositoryScan"("activeKey");
-CREATE UNIQUE INDEX "RepositoryScan_repositoryId_commitSha_scannerVersion_key" ON "RepositoryScan"("repositoryId", "commitSha", "scannerVersion");
+CREATE INDEX "RepositoryScan_repositoryId_commitSha_scannerVersion_idx" ON "RepositoryScan"("repositoryId", "commitSha", "scannerVersion");
 CREATE INDEX "RepositoryScan_status_scheduledFor_idx" ON "RepositoryScan"("status", "scheduledFor");
 CREATE INDEX "RepositoryScan_repositoryId_createdAt_idx" ON "RepositoryScan"("repositoryId", "createdAt");
 CREATE INDEX "RepositoryScan_status_leaseExpiresAt_idx" ON "RepositoryScan"("status", "leaseExpiresAt");

@@ -18,7 +18,7 @@ export function safeSourcePath(path: string): boolean {
   return normalized === path && !normalized.startsWith('../') && !path.split('/').some((part) => part === '..');
 }
 export function supportedSourcePath(path: string): boolean {
-  return safeSourcePath(path) && supportedExtensions.has(extname(path).toLowerCase()) && !IGNORED_FILES.test(path) && !path.split('/').some((part) => IGNORED_SEGMENTS.has(part));
+  return safeSourcePath(path) && supportedExtensions.has(extname(path).toLowerCase()) && !IGNORED_FILES.test(path) && !path.split('/').some((part) => IGNORED_SEGMENTS.has(part) || /^generated(?:[-_]|$)/i.test(part));
 }
 function language(path: string): string { const extension = extname(path).toLowerCase(); return extension === '.ts' || extension === '.tsx' ? 'TypeScript' : 'JavaScript'; }
 
@@ -46,7 +46,7 @@ export class RepositoryScanner {
     if (fullScan) entries = await this.github.tree(claim.owner, claim.name, commitSha);
     if (entries.some((entry) => !safeSourcePath(entry.path))) throw new GitHubError('Repository contains an unsafe source path', 422, false);
     const relevant = entries.filter((entry) => entry.type === 'blob' && entry.mode !== '120000' && supportedSourcePath(entry.path));
-    const skipped = entries.filter((entry) => entry.type === 'blob').length - relevant.length;
+    let skipped = entries.filter((entry) => entry.type === 'blob').length - relevant.length;
     if (relevant.length > this.maxFiles) throw new GitHubError(`Repository exceeds REPO_MAX_FILES (${this.maxFiles})`, 422, false);
     const declaredBytes = relevant.reduce((sum, entry) => sum + (entry.size ?? 0), 0);
     if (relevant.some((entry) => (entry.size ?? 0) > this.maxFileBytes)) throw new GitHubError(`Repository contains a file larger than REPO_MAX_FILE_BYTES (${this.maxFileBytes})`, 422, false);
@@ -59,8 +59,9 @@ export class RepositoryScanner {
         const content = await this.github.blob(claim.owner, claim.name, entry.sha);
         totalBytes += content.length;
         if (content.length > this.maxFileBytes || totalBytes > this.maxTotalBytes) throw new GitHubError('Downloaded repository content exceeds configured hard limits', 422, false);
-        if (content.includes(0)) continue;
+        if (content.includes(0)) { skipped += 1; continue; }
         const source = content.toString('utf8');
+        if (source.includes('\uFFFD')) { skipped += 1; continue; }
         const parseStarted = performance.now();
         const usages = extractApiUsages(entry.path, source);
         parseTimeMs += performance.now() - parseStarted;

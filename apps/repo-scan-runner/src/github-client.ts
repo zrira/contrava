@@ -8,6 +8,7 @@ export interface GitHubChangedFile { filename: string; previous_filename?: strin
 export class GitHubClient {
   private readonly timeoutMs = Number(process.env.GITHUB_TIMEOUT_MS ?? 15_000);
   private readonly apiUrl = process.env.GITHUB_API_URL ?? 'https://api.github.com';
+  private readonly maxResponseBytes = Number(process.env.GITHUB_MAX_RESPONSE_BYTES ?? 10_485_760);
   readonly authMode: 'PAT' | 'ANONYMOUS';
   lastRateLimit: { remaining: number | null; resetAt: string | null } = { remaining: null, resetAt: null };
   constructor(private readonly token = process.env.GITHUB_TOKEN?.trim() || null, private readonly fetchImpl: typeof fetch = fetch) { this.authMode = token ? 'PAT' : 'ANONYMOUS'; }
@@ -21,19 +22,26 @@ export class GitHubClient {
       } });
       const remainingHeader = response.headers.get('x-ratelimit-remaining');
       const resetHeader = response.headers.get('x-ratelimit-reset');
+      const retryAfterHeader = response.headers.get('retry-after');
       const remaining = remainingHeader === null ? null : Number(remainingHeader);
-      const resetAt = resetHeader ? new Date(Number(resetHeader) * 1000) : null;
-      this.lastRateLimit = { remaining: Number.isFinite(remaining) ? remaining : null, resetAt: resetAt && !Number.isNaN(resetAt.getTime()) ? resetAt.toISOString() : null };
+      const resetCandidate = resetHeader ? new Date(Number(resetHeader) * 1000) : retryAfterHeader ? new Date(Date.now() + Number(retryAfterHeader) * 1000) : null;
+      const resetAt = resetCandidate && !Number.isNaN(resetCandidate.getTime()) ? resetCandidate : null;
+      this.lastRateLimit = { remaining: Number.isFinite(remaining) ? remaining : null, resetAt: resetAt?.toISOString() ?? null };
+      const contentLength = Number(response.headers.get('content-length') ?? 0);
+      if (contentLength > this.maxResponseBytes) throw new GitHubError('GitHub response exceeds configured safety limit', 422, false);
+      const text = await response.text();
+      if (Buffer.byteLength(text) > this.maxResponseBytes) throw new GitHubError('GitHub response exceeds configured safety limit', 422, false);
+      const parsed = text ? JSON.parse(text) as unknown : null;
       if (!response.ok) {
-        const body = await response.json().catch(() => null) as { message?: string } | null;
+        const body = parsed as { message?: string } | null;
         const message = body?.message ?? `GitHub returned HTTP ${response.status}`;
-        const rateLimited = (response.status === 403 || response.status === 429) && remaining === 0;
+        const rateLimited = response.status === 429 || (response.status === 403 && (remaining === 0 || /rate limit/i.test(message)));
         if (rateLimited) throw new GitHubError(`GitHub rate limit exhausted${resetAt ? ` until ${resetAt.toISOString()}` : ''}`, response.status, true, true, resetAt);
         if (response.status === 401 || response.status === 403) throw new GitHubError('GitHub credentials are missing or unauthorized', response.status, false);
         if (response.status === 404) throw new GitHubError('GitHub repository or object was not found', response.status, false);
         throw new GitHubError(message, response.status, response.status >= 500 || response.status === 408 || response.status === 429);
       }
-      return await response.json() as T;
+      return parsed as T;
     } catch (error) {
       if (error instanceof GitHubError) throw error;
       throw new GitHubError(error instanceof Error ? `GitHub request failed: ${error.message}` : 'GitHub request failed', null, true);
