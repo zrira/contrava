@@ -52,6 +52,41 @@ enum OutboxStatus {
   FAILED
 }
 
+enum RepositoryProvider {
+  GITHUB
+}
+
+enum RepositoryStatus {
+  PENDING
+  ACTIVE
+  ERROR
+}
+
+enum RepositoryScanStatus {
+  PENDING
+  RUNNING
+  RETRY_SCHEDULED
+  RATE_LIMITED
+  COMPLETED
+  FAILED
+}
+
+enum ImpactConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum UsageMatchType {
+  STATIC_LITERAL
+  TEMPLATE_LITERAL
+  STRING_CONCATENATION
+  HTTP_CLIENT_CALL
+  BASE_URL_JOIN
+  WRAPPER_CALL
+  UNKNOWN
+}
+
 model TrackedApi {
   id                  String        @id @default(uuid()) @db.Uuid
   name                String        @db.VarChar(120)
@@ -68,6 +103,8 @@ model TrackedApi {
   scans               Scan[]
   jobs                ScanJob[]
   outboxMessages      OutboxMessage[]
+  repositoryLinks     ApiRepositoryLink[]
+  usages              ApiUsage[]
 
   @@index([scanEnabled, nextScanAt])
 }
@@ -100,6 +137,7 @@ model ApiChange {
   api                 TrackedApi     @relation(fields: [apiId], references: [id], onDelete: Cascade)
   previousSnapshot   ApiSnapshot    @relation("PreviousSnapshot", fields: [previousSnapshotId], references: [id], onDelete: Cascade)
   currentSnapshot    ApiSnapshot    @relation("CurrentSnapshot", fields: [currentSnapshotId], references: [id], onDelete: Cascade)
+  impactFindings     ImpactFinding[]
 
   @@index([apiId, createdAt])
   @@unique([previousSnapshotId, currentSnapshotId, category, path, method, description])
@@ -157,6 +195,8 @@ model OutboxMessage {
   id           String       @id @default(uuid()) @db.Uuid
   jobId        String?      @db.Uuid
   apiId        String?      @db.Uuid
+  repositoryScanId String?  @db.Uuid
+  availableAt  DateTime     @default(now()) @db.Timestamptz(3)
   topic        String
   routingKey   String
   payload      Json         @db.JsonB
@@ -170,10 +210,145 @@ model OutboxMessage {
   updatedAt    DateTime     @updatedAt @db.Timestamptz(3)
   job          ScanJob?     @relation(fields: [jobId], references: [id], onDelete: Cascade)
   api          TrackedApi?  @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  repositoryScan RepositoryScan? @relation(fields: [repositoryScanId], references: [id], onDelete: Cascade)
 
-  @@index([status, createdAt])
+  @@index([status, availableAt, createdAt])
   @@index([status, lockedAt])
   @@index([jobId, createdAt])
+  @@index([repositoryScanId, createdAt])
+}
+
+model Repository {
+  id                    String             @id @default(uuid()) @db.Uuid
+  owner                 String             @db.VarChar(120)
+  name                  String             @db.VarChar(120)
+  fullName              String             @unique @db.VarChar(241)
+  provider              RepositoryProvider @default(GITHUB)
+  defaultBranch         String?            @db.VarChar(255)
+  selectedBranch        String?            @db.VarChar(255)
+  installationId        String?
+  externalRepositoryId  String?
+  status                RepositoryStatus   @default(PENDING)
+  headCommitSha         String?            @db.VarChar(40)
+  lastIndexedCommitSha  String?            @db.VarChar(40)
+  lastIndexedAt         DateTime?          @db.Timestamptz(3)
+  createdAt             DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime           @updatedAt @db.Timestamptz(3)
+  apiLinks              ApiRepositoryLink[]
+  scans                 RepositoryScan[]
+  sourceFiles           SourceFile[]
+  usages                ApiUsage[]
+  impactFindings        ImpactFinding[]
+
+  @@unique([provider, owner, name])
+  @@index([status, updatedAt])
+}
+
+model ApiRepositoryLink {
+  id           String      @id @default(uuid()) @db.Uuid
+  apiId        String      @db.Uuid
+  repositoryId String      @db.Uuid
+  createdAt    DateTime    @default(now()) @db.Timestamptz(3)
+  api          TrackedApi  @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  repository   Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([apiId, repositoryId])
+  @@index([repositoryId])
+}
+
+model RepositoryScan {
+  id               String               @id @default(uuid()) @db.Uuid
+  repositoryId     String               @db.Uuid
+  commitSha        String?              @db.VarChar(40)
+  baseCommitSha    String?              @db.VarChar(40)
+  status           RepositoryScanStatus @default(PENDING)
+  scannerVersion   String               @default("1") @db.VarChar(20)
+  attempt          Int                  @default(0)
+  maxAttempts      Int                  @default(4)
+  scheduledFor     DateTime             @default(now()) @db.Timestamptz(3)
+  startedAt        DateTime?            @db.Timestamptz(3)
+  completedAt      DateTime?            @db.Timestamptz(3)
+  leaseExpiresAt   DateTime?            @db.Timestamptz(3)
+  claimToken       String?              @db.Uuid
+  runnerId         String?
+  activeKey        String?              @unique @db.Uuid
+  error            String?
+  rateLimitResetAt DateTime?            @db.Timestamptz(3)
+  filesScanned     Int                  @default(0)
+  filesSkipped     Int                  @default(0)
+  usagesFound      Int                  @default(0)
+  fullScan         Boolean              @default(true)
+  createdAt        DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(3)
+  repository       Repository           @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  outboxMessages   OutboxMessage[]
+
+  @@unique([repositoryId, commitSha, scannerVersion])
+  @@index([status, scheduledFor])
+  @@index([repositoryId, createdAt])
+  @@index([status, leaseExpiresAt])
+}
+
+model SourceFile {
+  id                   String       @id @default(uuid()) @db.Uuid
+  repositoryId         String       @db.Uuid
+  path                 String
+  language             String       @db.VarChar(30)
+  contentHash          String       @db.VarChar(64)
+  lastIndexedCommitSha String       @db.VarChar(40)
+  createdAt            DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(3)
+  repository           Repository   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  usages               ApiUsage[]
+
+  @@unique([repositoryId, path])
+  @@index([repositoryId, lastIndexedCommitSha])
+}
+
+model ApiUsage {
+  id              String            @id @default(uuid()) @db.Uuid
+  repositoryId    String            @db.Uuid
+  sourceFileId    String            @db.Uuid
+  apiId           String?           @db.Uuid
+  httpMethod      String?           @db.VarChar(12)
+  endpointPattern String
+  line            Int
+  column          Int?
+  snippet         String            @db.VarChar(1200)
+  confidence      ImpactConfidence
+  matchType       UsageMatchType
+  evidence        Json              @db.JsonB
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(3)
+  repository      Repository        @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  sourceFile      SourceFile        @relation(fields: [sourceFileId], references: [id], onDelete: Cascade)
+  api             TrackedApi?       @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  impactFindings  ImpactFinding[]
+
+  @@index([repositoryId, apiId, httpMethod])
+  @@index([repositoryId, endpointPattern])
+  @@index([sourceFileId, line])
+}
+
+model ImpactFinding {
+  id                     String           @id @default(uuid()) @db.Uuid
+  apiChangeId            String           @db.Uuid
+  repositoryId           String           @db.Uuid
+  apiUsageId             String           @db.Uuid
+  path                   String
+  line                   Int
+  confidence             ImpactConfidence
+  reason                 String
+  indexedCommitSha       String           @db.VarChar(40)
+  impactAlgorithmVersion String           @default("1") @db.VarChar(20)
+  createdAt              DateTime         @default(now()) @db.Timestamptz(3)
+  apiChange              ApiChange        @relation(fields: [apiChangeId], references: [id], onDelete: Cascade)
+  repository             Repository       @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  apiUsage               ApiUsage         @relation(fields: [apiUsageId], references: [id], onDelete: Cascade)
+
+  @@unique([apiChangeId, apiUsageId, impactAlgorithmVersion])
+  @@index([apiChangeId, confidence])
+  @@index([repositoryId, createdAt])
 }
 
 model Worker {
