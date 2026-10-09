@@ -7,6 +7,7 @@ import { JobsService } from './jobs.service';
 import { JobRepository } from './job.repository';
 import { OutboxPublisherService } from '../outbox/outbox-publisher.service';
 import { OutboxRepository } from '../outbox/outbox.repository';
+import { RepositoriesService } from '../repositories/repositories.service';
 
 const enabled = process.env.RABBITMQ_INTEGRATION === '1';
 const suite = enabled ? describe : describe.skip;
@@ -31,7 +32,7 @@ suite('RabbitMQ transactional outbox', () => {
     connection = await connect(rabbitUrl);
     channel = await connection.createChannel();
     await declareTopology(channel, topology);
-    await Promise.all([topology.scanQueue, topology.deadLetterQueue, ...topology.retryQueues.map((retry) => retry.queue)].map((queue) => channel.purgeQueue(queue)));
+    await Promise.all([topology.scanQueue, topology.repositoryScanQueue, topology.deadLetterQueue, topology.repositoryDeadLetterQueue, ...topology.retryQueues.map((retry) => retry.queue), ...topology.repositoryRetryQueues.map((retry) => retry.queue)].map((queue) => channel.purgeQueue(queue)));
     await prisma.$connect();
   });
   afterAll(async () => { await channel?.close(); await connection?.close(); await prisma.$disconnect(); });
@@ -66,6 +67,16 @@ suite('RabbitMQ transactional outbox', () => {
     await expect(prisma.outboxMessage.findFirstOrThrow({ where: { jobId: job.id } })).resolves.toMatchObject({ status: 'PUBLISHED' });
     channel.ack(await getEventually(topology.scanQueue));
     await recovered.onModuleDestroy();
+  });
+
+  it('publishes repository scan messages to the dedicated queue', async () => {
+    const repository = await prisma.repository.create({ data: { owner: 'contrava-test', name: `repo-${randomUUID()}`, fullName: `contrava-test/repo-${randomUUID()}` } });
+    const scan = await new RepositoriesService(prisma as never).enqueueScan(repository.id, 'repo-request');
+    const publisher = new OutboxPublisherService(new OutboxRepository(prisma as never));
+    await publisher.tick();
+    const delivered = await getEventually(topology.repositoryScanQueue);
+    expect(JSON.parse(delivered.content.toString())).toMatchObject({ version: 1, repositoryScanId: scan.id, repositoryId: repository.id });
+    channel.ack(delivered); await publisher.onModuleDestroy();
   });
 
   it('routes delayed retries back to the execution queue and rejected poison messages to the DLQ', async () => {
