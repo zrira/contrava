@@ -104,6 +104,14 @@ describe('incremental repository persistence', () => {
     if (duplicateClaim.disposition !== 'CLAIMED') throw new Error('Expected duplicate claim');
     await expect(service.resolve(duplicate.id, duplicateClaim.scan.claimToken, 'runner-2', { commitSha: commitB, defaultBranch: 'main', externalRepositoryId: '1' })).resolves.toEqual({ alreadyIndexed: true });
   });
+  it('retains an explicit stale-index signal when a resolved new head fails', async () => {
+    const repository = await prisma.repository.create({ data: { owner: 'owner', name: 'stale', fullName: 'owner/stale', lastIndexedCommitSha: commitA, lastIndexedAt: new Date() } });
+    const scan = await service.enqueueScan(repository.id, 'stale-test'); const claim = await service.claim(scan.id, 'runner');
+    if (claim.disposition !== 'CLAIMED') throw new Error('Expected claim');
+    await service.resolve(scan.id, claim.scan.claimToken, 'runner', { commitSha: commitB, defaultBranch: 'main', externalRepositoryId: '9' });
+    await service.fail(scan.id, claim.scan.claimToken, 'runner', { claimToken: claim.scan.claimToken, runnerId: 'runner', error: 'unsafe repository', retryable: false }, 'stale-test');
+    await expect(prisma.repository.findUniqueOrThrow({ where: { id: repository.id } })).resolves.toMatchObject({ headCommitSha: commitB, lastIndexedCommitSha: commitA, status: 'ERROR' });
+  });
   it('coalesces concurrent manual scan requests for one repository', async () => {
     const repository = await prisma.repository.create({ data: { owner: 'owner', name: 'coalesce', fullName: 'owner/coalesce' } });
     const scans = await Promise.all(Array.from({ length: 5 }, (_, index) => service.enqueueScan(repository.id, `request-${index}`)));
