@@ -16,6 +16,7 @@
   "dependencies": {
     "@contrava/shared": "*",
     "@contrava/rabbitmq": "*",
+    "@contrava/repo-scanner": "*",
     "amqplib": "^0.10.9",
     "@nestjs/common": "^11.1.8",
     "@nestjs/core": "^11.1.8",
