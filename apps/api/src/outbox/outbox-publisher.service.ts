@@ -14,6 +14,7 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
   private stopping = false;
   private reconnectDelayMs = 500;
   private nextConnectAt = 0;
+  private readonly enabled = (process.env.JOB_DELIVERY_MODE ?? 'rabbitmq') === 'rabbitmq';
   private readonly intervalMs = Number(process.env.OUTBOX_POLL_INTERVAL_MS ?? 500);
   private readonly batchSize = Number(process.env.OUTBOX_BATCH_SIZE ?? 50);
   private readonly rabbitUrl = process.env.RABBITMQ_URL ?? 'amqp://guest:guest@localhost:5672';
@@ -22,7 +23,7 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly repository: OutboxRepository) {}
 
   onModuleInit(): void {
-    if ((process.env.JOB_DELIVERY_MODE ?? 'rabbitmq') !== 'rabbitmq') return;
+    if (!this.enabled) return;
     this.timer = setInterval(() => void this.tick(), this.intervalMs);
     this.timer.unref();
     void this.tick();
@@ -90,6 +91,7 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
   }
 
   async health() {
+    if (!this.enabled) return { status: 'DISABLED' as const, dlqDepth: null };
     const started = performance.now();
     try {
       const channel = await this.ensureChannel();

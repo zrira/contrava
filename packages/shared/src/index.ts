@@ -89,8 +89,13 @@ export interface ScanExecuteMessage {
 export function isScanExecuteMessage(value: unknown): value is ScanExecuteMessage {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return candidate.version === 1
-    && ['messageId', 'jobId', 'apiId', 'correlationId', 'createdAt'].every((key) => typeof candidate[key] === 'string' && candidate[key] !== '');
+    && typeof candidate.messageId === 'string' && uuid.test(candidate.messageId)
+    && typeof candidate.jobId === 'string' && uuid.test(candidate.jobId)
+    && typeof candidate.apiId === 'string' && uuid.test(candidate.apiId)
+    && typeof candidate.correlationId === 'string' && candidate.correlationId !== ''
+    && typeof candidate.createdAt === 'string' && !Number.isNaN(Date.parse(candidate.createdAt));
 }
 
 export interface ClaimedJob {

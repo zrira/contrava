@@ -5,7 +5,7 @@ export interface Snapshot { id: string; apiId: string; contentHash: string; crea
 export interface ScanJob { id: string; apiId: string; status: string; source: string; attempt: number; maxAttempts: number; scheduledFor: string; claimedAt: string | null; startedAt: string | null; completedAt: string | null; failedAt: string | null; lastError: string | null; createdAt: string; api?: { id: string; name: string } }
 export interface PaginatedJobs { data: ScanJob[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }
 export interface QueueMetrics { pending: number; retrying: number; active: number; failed: number; expiredLeases: number; oldestPendingAgeSeconds: number | null; outboxPending: number; outboxFailed: number; messagesPublished: number; deadLettered: number }
-export interface SystemHealth { status: 'ok' | 'degraded'; rabbitmq: { status: 'HEALTHY' | 'UNAVAILABLE'; latencyMs?: number; dlqDepth: number | null; error?: string }; outbox: { pending: number; failed: number } }
+export interface SystemHealth { status: 'ok' | 'degraded'; rabbitmq: { status: 'HEALTHY' | 'UNAVAILABLE' | 'DISABLED'; latencyMs?: number; dlqDepth: number | null; error?: string }; outbox: { pending: number; failed: number } }
 export interface WorkerHealth { name: string; status: 'HEALTHY' | 'UNAVAILABLE'; latencyMs?: number; error?: string }
 
 const baseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';

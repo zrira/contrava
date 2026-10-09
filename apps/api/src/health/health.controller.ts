@@ -16,7 +16,7 @@ export class HealthController {
       this.publisher.health(),
     ]);
     return {
-      status: rabbitmq.status === 'HEALTHY' ? 'ok' : 'degraded',
+      status: rabbitmq.status === 'UNAVAILABLE' ? 'degraded' : 'ok',
       service: 'api',
       database: { status: 'HEALTHY', latencyMs: databaseLatencyMs },
       rabbitmq,

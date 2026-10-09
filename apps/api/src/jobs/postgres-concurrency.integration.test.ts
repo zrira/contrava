@@ -36,6 +36,15 @@ describe('PostgreSQL concurrent job claiming', () => {
     expect(claims.flat()).toHaveLength(1);
   });
 
+  it('does not let a redelivered old message bypass a durable retry delay', async () => {
+    const api = await createApi();
+    const scheduledFor = new Date(Date.now() + 5_000);
+    const job = await prisma.scanJob.create({ data: { apiId: api.id, status: 'RETRY_SCHEDULED', scheduledFor, attempt: 1 } });
+    await expect(repository.claimById(job.id, 'early-runner', 30_000)).resolves.toMatchObject({ disposition: 'BUSY', retryAfterMs: expect.any(Number) });
+    await prisma.scanJob.update({ where: { id: job.id }, data: { scheduledFor: new Date(Date.now() - 1) } });
+    await expect(repository.claimById(job.id, 'due-runner', 30_000)).resolves.toMatchObject({ disposition: 'CLAIMED', job: { attempt: 2, runnerId: 'due-runner' } });
+  });
+
   it('serializes concurrent completions for the same API snapshot', async () => {
     const api = await createApi();
     await prisma.scanJob.createMany({ data: [{ apiId: api.id }, { apiId: api.id }] });

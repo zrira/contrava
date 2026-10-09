@@ -25,7 +25,7 @@ export class JobRepository {
           FROM "ScanJob"
           WHERE "id" = ${jobId}::uuid
             AND (
-              "status" IN ('PENDING'::"ScanJobStatus", 'RETRY_SCHEDULED'::"ScanJobStatus")
+              ("status" IN ('PENDING'::"ScanJobStatus", 'RETRY_SCHEDULED'::"ScanJobStatus") AND "scheduledFor" <= ${now})
               OR ("status" IN ('CLAIMED'::"ScanJobStatus", 'RUNNING'::"ScanJobStatus") AND "leaseExpiresAt" <= ${now})
             )
           FOR UPDATE
@@ -50,7 +50,8 @@ export class JobRepository {
       if (!current) return { disposition: 'NOT_FOUND' };
       if (current.status === 'COMPLETED') return { disposition: 'COMPLETED' };
       if (current.status === 'FAILED') return { disposition: 'TERMINAL' };
-      const retryAfterMs = current.leaseExpiresAt ? Math.max(250, current.leaseExpiresAt.getTime() - now.getTime()) : 1000;
+      const availableAt = current.status === 'RETRY_SCHEDULED' ? current.scheduledFor : current.leaseExpiresAt;
+      const retryAfterMs = availableAt ? Math.max(250, availableAt.getTime() - now.getTime()) : 1000;
       return { disposition: 'BUSY', retryAfterMs };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
   }

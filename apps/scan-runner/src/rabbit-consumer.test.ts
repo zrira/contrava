@@ -4,8 +4,8 @@ import type { ClaimedJob, JobDeliveryDisposition, ScanExecuteMessage } from '@co
 import type { RunnerApi } from './client.js';
 import { RabbitJobConsumer } from './rabbit-consumer.js';
 
-const payload: ScanExecuteMessage = { version: 1, messageId: 'message-1', jobId: 'job-1', apiId: 'api-1', correlationId: 'request-1', createdAt: new Date().toISOString() };
-const job: ClaimedJob = { id: 'job-1', apiId: 'api-1', specUrl: 'https://example.com/spec', attempt: 1, maxAttempts: 4, claimToken: 'token', runnerId: 'runner', leaseExpiresAt: new Date(Date.now() + 30_000).toISOString(), previousSnapshot: null };
+const payload: ScanExecuteMessage = { version: 1, messageId: '11111111-1111-4111-8111-111111111111', jobId: '22222222-2222-4222-8222-222222222222', apiId: '33333333-3333-4333-8333-333333333333', correlationId: 'request-1', createdAt: new Date().toISOString() };
+const job: ClaimedJob = { id: payload.jobId, apiId: payload.apiId, specUrl: 'https://example.com/spec', attempt: 1, maxAttempts: 4, claimToken: 'token', runnerId: 'runner', leaseExpiresAt: new Date(Date.now() + 30_000).toISOString(), previousSnapshot: null };
 const message = (body: unknown = payload) => ({ content: Buffer.from(typeof body === 'string' ? body : JSON.stringify(body)), fields: { redelivered: false }, properties: {} }) as ConsumeMessage;
 const channel = () => ({ ack: vi.fn(), nack: vi.fn(), reject: vi.fn() });
 
