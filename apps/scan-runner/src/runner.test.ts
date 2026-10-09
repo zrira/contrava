@@ -8,10 +8,12 @@ const job = (id: string): ClaimedJob => ({ id, apiId: 'api-1', specUrl: 'https:/
 function fakeApi(queue: ClaimedJob[]): RunnerApi & { start: ReturnType<typeof vi.fn>; complete: ReturnType<typeof vi.fn> } {
   return {
     claim: vi.fn().mockImplementation((_runnerId: string, maxJobs: number) => Promise.resolve(queue.splice(0, maxJobs))),
+    claimDelivery: vi.fn().mockResolvedValue({ disposition: 'NOT_FOUND' }),
+    markDeadLettered: vi.fn().mockResolvedValue(undefined),
     start: vi.fn().mockResolvedValue(undefined),
     heartbeat: vi.fn().mockResolvedValue(undefined),
     complete: vi.fn().mockResolvedValue(undefined),
-    fail: vi.fn().mockResolvedValue(undefined),
+    fail: vi.fn().mockResolvedValue({ status: 'RETRY_SCHEDULED', attempt: 1, maxAttempts: 4 }),
   };
 }
 
