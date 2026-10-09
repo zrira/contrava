@@ -18,9 +18,9 @@ PostgreSQL is now the primary database. Native UUIDs, JSONB, timestamptz values,
 
 RabbitMQ now provides push delivery while PostgreSQL remains authoritative. Transactional outbox publication uses publisher confirms; runners use bounded prefetch and manual acknowledgements. Delayed retry queues provide 5/15/60-second stages, terminal/poison messages enter a DLQ, and claim-by-ID plus leases make duplicate and crash recovery idempotent. Broker health, outbox/DLQ metrics, integration tests, and RabbitMQ load tooling are included.
 
-## Phase 5 — GitHub integration
+### Phase 5 — GitHub integration and deterministic impact
 
-Connect repositories and map breaking endpoints to affected files, hooks, and pages. Keep repository analysis separate from deterministic contract diffing.
+GitHub repositories can now be registered, linked to tracked APIs, and indexed asynchronously at pinned commits. A dedicated RabbitMQ runner uses tree/blob and compare APIs, bounded JS/TS source filtering, TypeScript AST extraction, incremental file hashes, and explicit rate-limit/failure handling. Versioned deterministic matching maps breaking and potentially breaking API changes to evidence-backed repository/file/call-site findings with freshness and blast-radius UI.
 
 ## Phase 6 — AI impact analysis
 
@@ -40,4 +40,4 @@ After the workflow proves useful, add users, organizations, projects, authentica
 
 ## Deliberately deferred
 
-Redis, BullMQ, Kafka, Docker, Kubernetes, authentication, payments, service meshes, GraphQL, WebSockets, CQRS, event sourcing, GitHub access, AI, and cloud deployment remain outside Phase 4. RabbitMQ is used only for Phase 4 job delivery; PostgreSQL remains the business-state source of truth.
+Redis, BullMQ, Kafka, Docker, Kubernetes, authentication, payments, service meshes, GraphQL, WebSockets, CQRS, event sourcing, GitHub webhooks, AI, and cloud deployment remain outside Phase 5. RabbitMQ carries API and repository scan delivery; PostgreSQL remains the business-state source of truth.

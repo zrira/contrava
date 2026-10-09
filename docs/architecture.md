@@ -9,15 +9,18 @@ flowchart LR
   Publisher[Outbox publisher in API] -->|persistent publish + confirm| MQ[(RabbitMQ)]
   DB --> Publisher
   Scheduler[NestJS scheduler] --> DB
-  MQ -->|manual-ack delivery| Runner[scan-runner]
+  MQ -->|scan.execute| Runner[scan-runner]
+  MQ -->|repository.scan| RepoRunner[repo-scan-runner]
   Runner -->|claim / heartbeat / result| API
+  RepoRunner -->|claim / pinned index result| API
+  RepoRunner --> GitHub[GitHub tree/blob APIs]
   Runner --> Spec[spec-worker]
   Runner --> Diff[scan-worker]
 ```
 
 NestJS is the control plane and the sole owner of PostgreSQL. PostgreSQL is authoritative for APIs, schedules, snapshots, changes, scans, job state, leases, and outbox state. RabbitMQ provides push delivery, delayed retry queues, acknowledgements, and dead letters. A message never replaces the `ScanJob` row.
 
-The runner and deterministic workers do not open PostgreSQL. The runner consumes RabbitMQ and uses explicitly internal HTTP endpoints to claim a delivered job, manage its lease, and persist its result. The existing PostgreSQL batch-claim endpoint remains available only when `JOB_DELIVERY_MODE=postgres-polling` is selected as a fallback.
+The runners and deterministic workers do not open PostgreSQL. `repo-scan-runner` resolves a selected GitHub branch to an immutable commit, scans bounded JS/TS blobs with the TypeScript AST, and returns usage candidates through internal HTTP APIs. The runner consumes RabbitMQ and uses explicitly internal HTTP endpoints to claim a delivered job, manage its lease, and persist its result. The existing PostgreSQL batch-claim endpoint remains available only when `JOB_DELIVERY_MODE=postgres-polling` is selected as a fallback.
 
 ## Enqueue and delivery
 
@@ -95,4 +98,39 @@ RabbitMQ prefetch is normally equal to runner concurrency, so a runner does not 
 - **scan-runner:** broker consumer and HTTP orchestrator; no direct database access.
 - **spec/scan workers:** deterministic bounded HTTP computation; no queue or database access.
 
-See [RabbitMQ delivery](rabbitmq-delivery.md), [PostgreSQL concurrency](postgres-concurrency.md), and [performance](performance.md).
+## Repository indexing and impact
+
+```mermaid
+flowchart TD
+  G[GitHub] --> R[repo-scan-runner]
+  R --> I[(Repository index)]
+  I --> U[ApiUsage]
+  C[ApiChange] --> M[Deterministic matcher]
+  U --> M
+  M --> F[ImpactFinding]
+  F --> W[React blast-radius UI]
+```
+
+```mermaid
+sequenceDiagram
+  participant A as NestJS
+  participant P as PostgreSQL / outbox
+  participant Q as RabbitMQ
+  participant R as repo-scan-runner
+  participant G as GitHub
+  A->>P: transaction: RepositoryScan + OutboxMessage
+  P->>Q: confirmed repository.scan publish
+  Q->>R: manual-ack delivery
+  R->>A: claim scan lease
+  R->>G: resolve branch to commit SHA
+  R->>A: persist resolved SHA
+  R->>G: compare/tree + bounded blobs
+  R->>R: TypeScript AST extraction
+  R->>A: incremental files/usages result
+  A->>P: transaction: index + associations + findings
+  R->>Q: ACK after commit
+```
+
+Canonical usage extraction is independent of OpenAPI and persistence. NestJS associates normalized usages with linked APIs’ latest operations. New breaking/potentially breaking `ApiChange` rows are matched to those usages in the same database transaction. Findings retain scanner/algorithm versions, evidence, and indexed commit SHA. PostgreSQL remains authoritative; RabbitMQ only delivers scan notifications.
+
+See [RabbitMQ delivery](rabbitmq-delivery.md), [GitHub integration](github-integration.md), [impact analysis](impact-analysis.md), [PostgreSQL concurrency](postgres-concurrency.md), and [performance](performance.md).

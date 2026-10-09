@@ -9,11 +9,14 @@ All declarations are durable and idempotent. Messages are published as persisten
 | Kind | Default name | Binding / purpose |
 | --- | --- | --- |
 | Direct exchange | `contrava.jobs` | Primary scan delivery |
-| Queue | `contrava.scan.execute` | `scan.execute`; dead-letters rejected messages |
+| Queue | `contrava.scan.execute` | `scan.execute`; dead-letters rejected API scan messages |
+| Queue | `contrava.repository.scan` | `repository.scan`; dedicated bounded repository scans |
 | Direct exchange | `contrava.retry` | Delayed retry entry point |
 | TTL queues | `contrava.scan.retry.5s`, `.15s`, `.60s` | Bound by matching `scan.retry.*` key; expire to `contrava.jobs/scan.execute` |
+| TTL queues | `contrava.repository.retry.15s`, `.60s`, `.300s` | Transient repository failures return to `repository.scan` |
 | Direct exchange | `contrava.dlx` | Terminal and poison delivery |
 | Queue | `contrava.scan.dead` | `scan.dead` |
+| Queue | `contrava.repository.dead` | `repository.dead` |
 
 `RABBITMQ_TOPOLOGY_PREFIX` isolates integration-test topology. Production names may be overridden, but every API publisher and runner must use identical values.
 

@@ -2,7 +2,7 @@
 
 **Contrava — API contracts that watch themselves.**
 
-Contrava monitors OpenAPI contracts and reports breaking changes before they surprise production consumers. It registers APIs, schedules or manually queues scans, stores snapshots, compares changed specifications, classifies changes, and displays job and contract history.
+Contrava monitors OpenAPI contracts and reports breaking changes before they surprise production consumers. It registers APIs, indexes linked GitHub repositories at pinned commits, detects JavaScript/TypeScript endpoint usage, and maps contract changes to evidence-backed source locations without AI.
 
 ## Services
 
@@ -12,7 +12,8 @@ Contrava monitors OpenAPI contracts and reports breaking changes before they sur
 | `@contrava/api` | 3000 | NestJS control plane, scheduler, job API, and persistence |
 | `@contrava/spec-worker` | 3001 | Fetch, parse, normalize, and hash OpenAPI documents |
 | `@contrava/scan-worker` | 3002 | Deterministic OpenAPI contract diffing |
-| `@contrava/scan-runner` | 3003 | Consume, lease, heartbeat, and execute RabbitMQ-delivered jobs |
+| `@contrava/scan-runner` | 3003 | Consume, lease, heartbeat, and execute API scan jobs |
+| `@contrava/repo-scan-runner` | 3004 | Pin GitHub commits and incrementally index JS/TS API usage |
 
 ## Prerequisites
 
@@ -31,7 +32,7 @@ createdb --owner=contrava contrava
 createdb --owner=contrava contrava_test
 ```
 
-If the role or databases already exist, reuse them rather than recreating them. Create or obtain a local RabbitMQ account/vhost and set `RABBITMQ_URL`. The localhost examples use RabbitMQ's development-only `guest` account. Then initialize Contrava:
+If the role or databases already exist, reuse them rather than recreating them. Create or obtain a local RabbitMQ account/vhost and set `RABBITMQ_URL`. The localhost examples use RabbitMQ's development-only `guest` account. Public GitHub repositories work without a token at lower rate limits; set a read-only fine-grained `GITHUB_TOKEN` only on `repo-scan-runner` for private repositories or higher limits. Then initialize Contrava:
 
 ```bash
 npm install
@@ -43,7 +44,7 @@ npm run dev
 
 The example URL is `postgresql://contrava:contrava@localhost:5432/contrava?connection_limit=10&pool_timeout=10`. Change local credentials as needed and never commit real secrets.
 
-Open <http://localhost:5173>. All five applications can also be started independently:
+Open <http://localhost:5173>. All six applications can also be started independently:
 
 ```bash
 npm run dev -w @contrava/web
@@ -51,6 +52,7 @@ npm run dev -w @contrava/api
 npm run dev -w @contrava/spec-worker
 npm run dev -w @contrava/scan-worker
 npm run dev -w @contrava/scan-runner
+npm run dev -w @contrava/repo-scan-runner
 ```
 
 Prisma loads `apps/api/.env`. Runtime services use the documented localhost defaults; to override them, export values from the root `.env.example` in your shell before `npm run dev`.
@@ -60,7 +62,8 @@ Prisma loads `apps/api/.env`. Runtime services use the documented localhost defa
 1. Add a name and a reachable OpenAPI 3.x JSON/YAML URL in **Add API**.
 2. Open the API and select **Scan now**, or enable automatic scanning and choose an interval.
 3. Watch the persisted job move through `/jobs`; the runner creates the baseline snapshot.
-4. Change the document and queue another scan to see classified changes.
+4. Register a GitHub repository, link it from the API detail page, and run its first index.
+5. Change the OpenAPI document and queue another API scan to see classified changes and repository blast radius.
 
 Workers and the runner intentionally do not access PostgreSQL. Enqueue commits a job and outbox message together; the API publishes with confirms, and the runner manually acknowledges RabbitMQ only after the API commits a durable outcome. To test recovery locally, stop a runner during a job and start another after `JOB_LEASE_MS`; to test all retry stages and the DLQ, set `RUNNER_FAILURE_RATE=1` temporarily.
 
@@ -82,9 +85,12 @@ RABBITMQ_URL=amqp://guest:guest@localhost:5672 npm run test:rabbitmq
 
 # API and RabbitMQ must be running; synthetic consumers use real broker delivery
 npm run load:rabbitmq -- --jobs=1000 --runners=4 --apis=10
+
+# Deterministic AST extraction benchmark
+npm run benchmark:repo-scanner
 ```
 
-The API includes `/health`, CRUD and schedules under `/apis`, asynchronous `/apis/:id/scan`, `/jobs`, snapshot/change history, `/scans`, aggregate `/workers` health, and explicitly internal `/internal/jobs/*` runner endpoints.
+The API includes `/health`, API CRUD/scheduling, repository CRUD/linking/indexing, paginated source usages, impact findings, `/jobs`, snapshot/change history, `/scans`, aggregate `/workers` health, and explicitly internal runner lifecycle endpoints.
 
 ## PostgreSQL operations
 
@@ -92,8 +98,8 @@ Prisma manages a connection pool per API process. Configure `connection_limit` a
 
 Completed-job retention is currently policy-only: `JOB_RETENTION_DAYS=30` documents the intended horizon, but Phase 3 does not automatically delete history. Job history is paginated with `GET /jobs?page=1&pageSize=25&status=FAILED`.
 
-See [RabbitMQ delivery](docs/rabbitmq-delivery.md), [PostgreSQL concurrency](docs/postgres-concurrency.md), [performance](docs/performance.md), and [architecture](docs/architecture.md).
+See [GitHub integration](docs/github-integration.md), [impact analysis](docs/impact-analysis.md), [RabbitMQ delivery](docs/rabbitmq-delivery.md), [PostgreSQL concurrency](docs/postgres-concurrency.md), [performance](docs/performance.md), and [architecture](docs/architecture.md).
 
 ## Current limitations
 
-RabbitMQ delivery and internal runner endpoints are intentionally unauthenticated in this learning system. `JOB_DELIVERY_MODE=postgres-polling` remains an explicit Phase 3 fallback, not the default. Scheduling supports fixed intervals rather than cron, automated retention is not enabled, and OpenAPI `$ref` handling is limited to local document references.
+Internal runner endpoints are intentionally unauthenticated in this learning system. GitHub indexing supports only JS/TS, manual refresh, and deterministic local call-expression heuristics: dynamic URLs, unusual wrappers, interprocedural dataflow, runtime tracing, and precise response-field use can be missed. GitHub webhooks, GitHub App token issuance, AI explanations, automated fixes, and PR creation are deferred. `JOB_DELIVERY_MODE=postgres-polling` remains an API-scan fallback; repository scans require RabbitMQ.

@@ -53,3 +53,15 @@ npm run load:rabbitmq -- --jobs=200 --runners=4 --apis=1 --prefetch=10
 The Phase 3 and Phase 4 numbers are directional rather than a strict transport benchmark: their timers and claim paths differ. RabbitMQ removed repeated empty database polls and reduced delivery latency as consumers increased, while end-to-end throughput still plateaued around the PostgreSQL/API completion path. Higher concurrency increased execution latency because all jobs intentionally contended on one API. A separate 10-API run reached 55.95 jobs/sec with two consumers, showing that the protected per-API baseline remains more important than broker throughput at this scale.
 
 Tune `RABBITMQ_PREFETCH` near actual execution concurrency. Large prefetch values reduce broker round trips but reserve work on individual runners and can increase redelivery recovery time. Monitor outbox depth, ready/unacknowledged queue depth, DLQ depth, completion latency, PostgreSQL pool saturation, and per-API contention before raising consumer counts.
+
+## Phase 5 repository scanner benchmark
+
+`npm run benchmark:repo-scanner` generates deterministic TypeScript fixtures with one HTTP call per file and measures AST extraction plus index-payload preparation. It excludes GitHub network latency and PostgreSQL commit time, so it is a parser baseline rather than end-to-end repository capacity.
+
+| Files/usages | Parse ms | Files/sec | Index preparation ms | Payload bytes | Heap delta MiB |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 100 | 43 | 2,331.28 | 0.25 | 47,161 | 3.47 |
+| 1,000 | 123 | 8,118.82 | 2.07 | 475,561 | 4.74 |
+| 5,000 | 299 | 16,697.12 | 9.28 | 2,395,561 | 1.85 |
+
+The increasing throughput reflects parser/JIT warm-up; runs are sequential on the same process. Memory deltas are noisy because garbage collection is not forced. The practical end-to-end bottlenecks are usually GitHub API latency/rate limits and transactional index persistence, not AST walking. Defaults cap repositories at 5,000 supported files, 512 KiB per file, and 50 MiB total source. `REPO_SCAN_PREFETCH` defaults to one while bounded blob fetch concurrency defaults to four.
