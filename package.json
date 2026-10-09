@@ -11,7 +11,8 @@
     "test:postgres": "node scripts/test-postgres.mjs",
     "test:rabbitmq": "node scripts/test-rabbitmq.mjs",
     "load:jobs": "tsx scripts/load-scan-jobs.ts",
-    "typecheck": "npm run build -w @contrava/shared && npm run build -w @contrava/rabbitmq && npm run typecheck --workspaces --if-present && tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --strict --skipLibCheck scripts/load-scan-jobs.ts",
+    "load:rabbitmq": "tsx scripts/load-rabbitmq.ts",
+    "typecheck": "npm run build -w @contrava/shared && npm run build -w @contrava/rabbitmq && npm run typecheck --workspaces --if-present && tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --strict --skipLibCheck scripts/load-scan-jobs.ts scripts/load-rabbitmq.ts",
     "lint": "eslint scripts && npm run lint --workspaces --if-present",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -20,6 +21,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@types/amqplib": "^0.10.7",
+    "amqplib": "^0.10.9",
     "eslint": "^9.39.1",
     "globals": "^16.5.0",
     "prettier": "^3.6.2",
