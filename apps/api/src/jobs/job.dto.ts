@@ -10,6 +10,10 @@ export class JobsQueryDto {
 }
 
 
+export class DeliveryClaimDto {
+  @IsString() @IsNotEmpty() runnerId!: string;
+}
+
 export class ClaimJobDto {
   @IsString() @IsNotEmpty() runnerId!: string;
   @IsInt() @Min(1) @Max(50) maxJobs!: number;

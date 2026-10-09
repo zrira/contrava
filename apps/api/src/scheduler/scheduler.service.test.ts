@@ -7,7 +7,8 @@ function database(api: { id: string; scanEnabled: boolean; scanIntervalMinutes: 
       findMany: vi.fn().mockResolvedValue(due && api ? [{ id: api.id }] : []),
       update: vi.fn().mockResolvedValue({}),
     },
-    scanJob: { create: vi.fn().mockResolvedValue({ id: 'job-1' }) },
+    scanJob: { create: vi.fn().mockResolvedValue({ id: 'job-1', apiId: api?.id ?? 'api-1', correlationId: 'correlation-1' }) },
+    outboxMessage: { create: vi.fn().mockResolvedValue({}) },
     $queryRaw: vi.fn().mockResolvedValue(api ? [api] : []),
     $transaction: vi.fn(),
   };

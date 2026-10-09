@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Req } from '@nestjs/common';
+import type { CorrelatedRequest } from '../common/correlation-id.middleware';
 import { JobsService } from '../jobs/jobs.service';
 import { UpdateScheduleDto } from '../scheduler/schedule.dto';
 import { ApisService } from './apis.service';
@@ -13,6 +14,6 @@ export class ApisController {
   @Patch(':id') update(@Param('id') id: string, @Body() body: UpdateApiDto) { return this.apis.update(id, body); }
   @Patch(':id/schedule') schedule(@Param('id') id: string, @Body() body: UpdateScheduleDto) { return this.apis.updateSchedule(id, body); }
   @Delete(':id') @HttpCode(204) remove(@Param('id') id: string) { return this.apis.remove(id); }
-  @Post(':id/scan') async scan(@Param('id') id: string) { await this.apis.get(id); const job = await this.jobs.enqueue(id); return { jobId: job.id, status: job.status }; }
+  @Post(':id/scan') async scan(@Param('id') id: string, @Req() request: CorrelatedRequest) { await this.apis.get(id); const job = await this.jobs.enqueue(id, 'MANUAL', undefined, request.requestId); return { jobId: job.id, status: job.status }; }
   @Get(':id/jobs') async apiJobs(@Param('id') id: string) { await this.apis.get(id); return this.jobs.listForApi(id); }
 }

@@ -1,12 +1,13 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { createScanOutbox } from '../outbox/outbox-message';
 
 @Injectable()
 export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   private timer?: NodeJS.Timeout;
   private running = false;
   private readonly intervalMs = Number(process.env.SCHEDULER_INTERVAL_MS ?? 10_000);
-  private readonly maxAttempts = Number(process.env.MAX_JOB_ATTEMPTS ?? 3);
+  private readonly maxAttempts = Number(process.env.MAX_JOB_ATTEMPTS ?? 4);
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -47,9 +48,10 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (!api) return false;
       const scheduleKey = `${api.id}:${api.nextScanAt.toISOString()}`;
       const nextScanAt = new Date(now.getTime() + api.scanIntervalMinutes * 60_000);
-      await transaction.scanJob.create({
+      const job = await transaction.scanJob.create({
         data: { apiId: api.id, source: 'SCHEDULED', scheduleKey, scheduledFor: now, maxAttempts: this.maxAttempts },
       });
+      await createScanOutbox(transaction, job);
       await transaction.trackedApi.update({ where: { id: api.id }, data: { nextScanAt } });
       return true;
     });

@@ -4,7 +4,7 @@ import { JobsService } from './jobs.service';
 const jobRepository = () => ({ claimBatch: vi.fn(), lockApiForSnapshot: vi.fn().mockResolvedValue(undefined) });
 
 const baseJob = {
-  id: 'job-1', apiId: 'api-1', status: 'RUNNING', source: 'MANUAL', scheduleKey: null,
+  id: 'job-1', apiId: 'api-1', correlationId: 'correlation-1', status: 'RUNNING', source: 'MANUAL', scheduleKey: null,
   attempt: 1, maxAttempts: 3, scheduledFor: new Date(), claimedAt: new Date(), startedAt: new Date(),
   leaseExpiresAt: new Date(Date.now() + 30_000), claimToken: 'token', runnerId: 'runner-1', completedAt: null,
   failedAt: null, lastError: null, createdAt: new Date(), updatedAt: new Date(),
@@ -22,6 +22,7 @@ function transactionalDb(overrides: Record<string, unknown> = {}) {
     },
     scan: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), upsert: vi.fn().mockResolvedValue({}) },
     trackedApi: { update: vi.fn().mockResolvedValue({}) },
+    outboxMessage: { create: vi.fn().mockResolvedValue({}) },
     apiSnapshot: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     apiChange: { create: vi.fn() },
     $transaction: vi.fn(),

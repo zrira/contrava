@@ -1,27 +1,28 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { retryRoutingKey } from '@contrava/rabbitmq';
 import type { CompleteJobRequest, ContractChange } from '@contrava/shared';
 import type { Prisma, ScanJobStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { JobRepository } from './job.repository';
+import { createScanOutbox } from '../outbox/outbox-message';
 
-const RETRY_DELAYS_MS = [5_000, 15_000] as const;
+const RETRY_DELAYS_MS = [5_000, 15_000, 60_000] as const;
 
 @Injectable()
 export class JobsService {
   private readonly leaseMs = Number(process.env.JOB_LEASE_MS ?? 30_000);
-  private readonly defaultMaxAttempts = Number(process.env.MAX_JOB_ATTEMPTS ?? 3);
+  private readonly defaultMaxAttempts = Number(process.env.MAX_JOB_ATTEMPTS ?? 4);
 
   constructor(private readonly prisma: PrismaService, private readonly repository: JobRepository) {}
 
-  enqueue(apiId: string, source: 'MANUAL' | 'SCHEDULED' = 'MANUAL', scheduleKey?: string) {
-    return this.prisma.scanJob.create({
-      data: {
-        apiId,
-        source,
-        maxAttempts: this.defaultMaxAttempts,
-        ...(scheduleKey ? { scheduleKey } : {}),
-      },
-      select: { id: true, status: true, scheduledFor: true },
+  enqueue(apiId: string, source: 'MANUAL' | 'SCHEDULED' = 'MANUAL', scheduleKey?: string, correlationId: string = randomUUID()) {
+    return this.prisma.$transaction(async (transaction) => {
+      const job = await transaction.scanJob.create({
+        data: { id: randomUUID(), apiId, correlationId, source, maxAttempts: this.defaultMaxAttempts, ...(scheduleKey ? { scheduleKey } : {}) },
+      });
+      await createScanOutbox(transaction, job);
+      return { id: job.id, status: job.status, scheduledFor: job.scheduledFor };
     });
   }
 
@@ -42,7 +43,7 @@ export class JobsService {
 
   async metrics() {
     const now = new Date();
-    const [pending, retrying, claimed, running, failed, expiredLeases, oldest] = await this.prisma.$transaction([
+    const [pending, retrying, claimed, running, failed, expiredLeases, oldest, outboxPending, outboxFailed, messagesPublished, deadLettered] = await this.prisma.$transaction([
       this.prisma.scanJob.count({ where: { status: 'PENDING' } }),
       this.prisma.scanJob.count({ where: { status: 'RETRY_SCHEDULED' } }),
       this.prisma.scanJob.count({ where: { status: 'CLAIMED' } }),
@@ -50,6 +51,10 @@ export class JobsService {
       this.prisma.scanJob.count({ where: { status: 'FAILED' } }),
       this.prisma.scanJob.count({ where: { status: { in: ['CLAIMED', 'RUNNING'] }, leaseExpiresAt: { lt: now } } }),
       this.prisma.scanJob.aggregate({ where: { status: { in: ['PENDING', 'RETRY_SCHEDULED'] } }, _min: { scheduledFor: true } }),
+      this.prisma.outboxMessage.count({ where: { status: 'PENDING' } }),
+      this.prisma.outboxMessage.count({ where: { status: 'FAILED' } }),
+      this.prisma.outboxMessage.count({ where: { status: 'PUBLISHED' } }),
+      this.prisma.scanJob.count({ where: { deadLetteredAt: { not: null } } }),
     ]);
     const oldestDate = oldest._min.scheduledFor;
     return {
@@ -59,6 +64,10 @@ export class JobsService {
       failed,
       expiredLeases,
       oldestPendingAgeSeconds: oldestDate ? Math.max(0, Math.floor((now.getTime() - oldestDate.getTime()) / 1000)) : null,
+      outboxPending,
+      outboxFailed,
+      messagesPublished,
+      deadLettered,
     };
   }
 
@@ -79,6 +88,14 @@ export class JobsService {
 
   claim(runnerId: string, maxJobs: number) {
     return this.repository.claimBatch(runnerId, maxJobs, this.leaseMs);
+  }
+
+  claimDelivery(id: string, runnerId: string) {
+    return this.repository.claimById(id, runnerId, this.leaseMs);
+  }
+
+  markDeadLettered(id: string) {
+    return this.prisma.scanJob.updateMany({ where: { id }, data: { deadLetteredAt: new Date() } });
   }
 
   async start(id: string, claimToken: string, runnerId: string) {
@@ -157,6 +174,7 @@ export class JobsService {
       const delay = RETRY_DELAYS_MS[Math.min(job.attempt - 1, RETRY_DELAYS_MS.length - 1)]!;
       const now = new Date();
       await transaction.scan.updateMany({ where: { jobId: id }, data: { status: retry ? 'RETRY_SCHEDULED' : 'FAILED', completedAt: now, error } });
+      if (retry) await createScanOutbox(transaction, job, 'retry', retryRoutingKey(job.attempt));
       if (!retry) await transaction.trackedApi.update({ where: { id: job.apiId }, data: { status: 'ERROR', lastCheckedAt: now } });
       return transaction.scanJob.update({
         where: { id },
