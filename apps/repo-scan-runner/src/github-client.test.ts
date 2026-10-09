@@ -16,6 +16,16 @@ describe('GitHubClient failure classification', () => {
     expect(error.rateLimited).toBe(true); expect(error.retryable).toBe(true); expect(error.resetAt).toBeInstanceOf(Date);
     expect(error.message).not.toContain('super-secret-token');
   });
+  it('rejects unsupported blob encodings without retrying', async () => {
+    const client = new GitHubClient(null, vi.fn().mockResolvedValue(response(200, { encoding: 'utf-8', content: 'unsafe archive-like payload', size: 27 })));
+    await expect(client.blob('owner', 'repo', 'a'.repeat(40))).rejects.toMatchObject({ retryable: false, status: 422 });
+  });
+  it('rejects oversized GitHub responses', async () => {
+    vi.stubEnv('GITHUB_MAX_RESPONSE_BYTES', '10');
+    const client = new GitHubClient(null, vi.fn().mockResolvedValue(response(200, { id: 1, default_branch: 'main' })));
+    await expect(client.repository('owner', 'repo')).rejects.toMatchObject({ retryable: false });
+    vi.unstubAllEnvs();
+  });
   it('classifies network timeouts as retryable', async () => {
     const client = new GitHubClient(null, vi.fn().mockRejectedValue(new DOMException('aborted', 'AbortError')));
     await expect(client.repository('owner', 'repo')).rejects.toMatchObject({ retryable: true, status: null });
