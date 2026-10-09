@@ -6,6 +6,8 @@ import type { Prisma, ScanJobStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { JobRepository } from './job.repository';
 import { createScanOutbox } from '../outbox/outbox-message';
+import { createFindingsForChange } from '../impact/impact-matcher';
+import { rebuildUsageAssociations } from '../repositories/usage-association';
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 60_000] as const;
 
@@ -142,9 +144,12 @@ export class JobsService {
         const latest = await transaction.apiSnapshot.findFirst({ where: { apiId: job.apiId }, orderBy: { createdAt: 'desc' } });
         if ((latest?.id ?? null) !== result.previousSnapshotId) throw new ConflictException('Snapshot baseline changed; retry the job');
         const snapshot = await transaction.apiSnapshot.create({ data: { apiId: job.apiId, contentHash: result.hash, rawSpec: JSON.parse(JSON.stringify(result.spec)) as Prisma.InputJsonValue } });
+        const links = await transaction.apiRepositoryLink.findMany({ where: { apiId: job.apiId }, select: { repositoryId: true } });
+        for (const link of links) await rebuildUsageAssociations(transaction, link.repositoryId);
         if (latest) {
           for (const change of result.changes as ContractChange[]) {
-            await transaction.apiChange.create({ data: { apiId: job.apiId, previousSnapshotId: latest.id, currentSnapshotId: snapshot.id, severity: change.severity, category: change.category, path: change.path, method: change.method, description: change.description } });
+            const storedChange = await transaction.apiChange.create({ data: { apiId: job.apiId, previousSnapshotId: latest.id, currentSnapshotId: snapshot.id, severity: change.severity, category: change.category, path: change.path, method: change.method, description: change.description } });
+            await createFindingsForChange(transaction, storedChange);
           }
         }
       }

@@ -22,6 +22,7 @@ function transactionalDb(overrides: Record<string, unknown> = {}) {
     },
     scan: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), upsert: vi.fn().mockResolvedValue({}) },
     trackedApi: { update: vi.fn().mockResolvedValue({}) },
+    apiRepositoryLink: { findMany: vi.fn().mockResolvedValue([]) },
     outboxMessage: { create: vi.fn().mockResolvedValue({}) },
     apiSnapshot: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     apiChange: { create: vi.fn() },

@@ -16,7 +16,7 @@ export class ApisService {
   async create(data: CreateApiDto) { return this.prisma.trackedApi.create({ data }); }
 
   async get(id: string) {
-    const api = await this.prisma.trackedApi.findUnique({ where: { id }, include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 }, _count: { select: { changes: { where: { severity: 'BREAKING' } } } } } });
+    const api = await this.prisma.trackedApi.findUnique({ where: { id }, include: { snapshots: { orderBy: { createdAt: 'desc' }, take: 1 }, repositoryLinks: { include: { repository: { select: { id: true, fullName: true, lastIndexedCommitSha: true } } } }, _count: { select: { changes: { where: { severity: 'BREAKING' } } } } } });
     if (!api) throw new NotFoundException('Tracked API not found');
     const { snapshots, _count, ...details } = api;
     return { ...details, currentVersionHash: snapshots[0]?.contentHash ?? null, breakingChangesCount: _count.changes };
