@@ -4,7 +4,8 @@ export interface Change { id: string; currentSnapshotId: string; severity: 'NON_
 export interface Snapshot { id: string; apiId: string; contentHash: string; createdAt: string; currentChanges: Change[] }
 export interface ScanJob { id: string; apiId: string; status: string; source: string; attempt: number; maxAttempts: number; scheduledFor: string; claimedAt: string | null; startedAt: string | null; completedAt: string | null; failedAt: string | null; lastError: string | null; createdAt: string; api?: { id: string; name: string } }
 export interface PaginatedJobs { data: ScanJob[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }
-export interface QueueMetrics { pending: number; retrying: number; active: number; failed: number; expiredLeases: number; oldestPendingAgeSeconds: number | null }
+export interface QueueMetrics { pending: number; retrying: number; active: number; failed: number; expiredLeases: number; oldestPendingAgeSeconds: number | null; outboxPending: number; outboxFailed: number; messagesPublished: number; deadLettered: number }
+export interface SystemHealth { status: 'ok' | 'degraded'; rabbitmq: { status: 'HEALTHY' | 'UNAVAILABLE'; latencyMs?: number; dlqDepth: number | null; error?: string }; outbox: { pending: number; failed: number } }
 export interface WorkerHealth { name: string; status: 'HEALTHY' | 'UNAVAILABLE'; latencyMs?: number; error?: string }
 
 const baseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
@@ -26,6 +27,7 @@ export const runScan = (id: string) => apiRequest<{ jobId: string; status: strin
 export const updateSchedule = (id: string, body: { scanEnabled: boolean; scanIntervalMinutes: number }) => apiRequest<TrackedApi>(`/apis/${id}/schedule`, { method: 'PATCH', body: JSON.stringify(body) });
 export const listJobs = (status?: string, page = 1, pageSize = 25) => { const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) }); if (status) query.set('status', status); return apiRequest<PaginatedJobs>(`/jobs?${query}`); };
 export const getQueueMetrics = () => apiRequest<QueueMetrics>('/jobs/metrics');
+export const getSystemHealth = () => apiRequest<SystemHealth>('/health');
 export const listApiJobs = (id: string) => apiRequest<ScanJob[]>(`/apis/${id}/jobs`);
 export const listScans = () => apiRequest<Scan[]>('/scans');
 export const listChanges = (id: string) => apiRequest<Change[]>(`/apis/${id}/changes`);
