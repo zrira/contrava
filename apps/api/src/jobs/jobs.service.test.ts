@@ -56,10 +56,21 @@ describe('JobsService lifecycle', () => {
     vi.useRealTimers();
   });
 
+  it('uses the 60-second broker stage after the third failed attempt', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T00:00:00Z'));
+    const db = transactionalDb({ scanJob: { findUnique: vi.fn().mockResolvedValue({ ...baseJob, attempt: 3, maxAttempts: 4 }) } });
+    await new JobsService(db as never, jobRepository() as never).fail('job-1', 'token', 'runner-1', 'again');
+    expect(db.scanJob.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ scheduledFor: new Date('2025-01-01T00:01:00Z') }) }));
+    expect(db.outboxMessage.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ routingKey: 'scan.retry.60s' }) }));
+    vi.useRealTimers();
+  });
+
   it('marks a job failed at its maximum attempt', async () => {
     const db = transactionalDb({ scanJob: { findUnique: vi.fn().mockResolvedValue({ ...baseJob, attempt: 3, maxAttempts: 3 }), update: vi.fn().mockImplementation(({ data }) => Promise.resolve(data)) } });
     await expect(new JobsService(db as never, jobRepository() as never).fail('job-1', 'token', 'runner-1', 'still failing')).resolves.toMatchObject({ status: 'FAILED' });
     expect(db.trackedApi.update).toHaveBeenCalledOnce();
+    expect(db.outboxMessage.create).not.toHaveBeenCalled();
   });
 
   it('treats duplicate completion as safe', async () => {

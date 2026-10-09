@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { JobRepository } from './job.repository';
 import { JobsService } from './jobs.service';
 import { SchedulerService } from '../scheduler/scheduler.service';
+import { OutboxRepository } from '../outbox/outbox.repository';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required for PostgreSQL integration tests');
@@ -61,6 +62,33 @@ describe('PostgreSQL concurrent job claiming', () => {
     const result = { hash: 'a'.repeat(64), spec: { openapi: '3.1.0' }, previousSnapshotId: null, changes: [] };
     await expect(service.complete(original.id, { ...result, claimToken: original.claimToken!, runnerId: 'runner-old' })).rejects.toThrow('not held');
     await expect(service.complete(reclaimed!.id, { ...result, claimToken: reclaimed!.claimToken, runnerId: reclaimed!.runnerId })).resolves.toMatchObject({ status: 'COMPLETED' });
+  });
+});
+
+describe('PostgreSQL outbox locking', () => {
+  it('claims each message once across concurrent publishers', async () => {
+    const api = await createApi('Outbox API');
+    const jobs = new JobsService(prisma as never, repository);
+    await Promise.all(Array.from({ length: 20 }, () => jobs.enqueue(api.id)));
+    const publishers = Array.from({ length: 10 }, () => new OutboxRepository(prisma as never));
+    const batches = await Promise.all(publishers.map((publisher) => publisher.claimBatch(2)));
+    const rows = batches.flat();
+    expect(rows).toHaveLength(20);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(20);
+  });
+
+  it('recovers an abandoned publisher lock after its timeout', async () => {
+    const api = await createApi('Stale outbox API');
+    const jobs = new JobsService(prisma as never, repository);
+    const job = await jobs.enqueue(api.id);
+    const outbox = new OutboxRepository(prisma as never);
+    const [first] = await outbox.claimBatch(1);
+    expect(first?.jobId).toBe(job.id);
+    await expect(outbox.claimBatch(1)).resolves.toHaveLength(0);
+    await prisma.outboxMessage.update({ where: { id: first!.id }, data: { lockedAt: new Date(Date.now() - 31_000) } });
+    const [recovered] = await outbox.claimBatch(1);
+    expect(recovered?.id).toBe(first!.id);
+    expect(recovered?.lockToken).not.toBe(first!.lockToken);
   });
 });
 

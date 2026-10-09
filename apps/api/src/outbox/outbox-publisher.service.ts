@@ -37,7 +37,10 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
   private async publishBatch(): Promise<void> {
     let channel: ConfirmChannel;
     try { channel = await this.ensureChannel(); }
-    catch { return; }
+    catch (error) {
+      if (!(error instanceof Error && error.message === 'RabbitMQ reconnect backoff active')) console.error(JSON.stringify({ service: 'api', event: 'rabbit connection failed', error: error instanceof Error ? error.message : 'Connection failed' }));
+      return;
+    }
     const messages = await this.repository.claimBatch(this.batchSize);
     if (!messages.length) return;
     const started = performance.now();
@@ -98,13 +101,22 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private clearConnection(): void { this.channel = undefined; this.connection = undefined; }
+  private clearConnection(): void {
+    const connection = this.connection;
+    this.channel = undefined;
+    this.connection = undefined;
+    if (connection) void connection.close().catch(() => undefined);
+  }
 
   async onModuleDestroy(): Promise<void> {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     await this.publishing;
-    await this.channel?.close().catch(() => undefined);
-    await this.connection?.close().catch(() => undefined);
+    const channel = this.channel;
+    const connection = this.connection;
+    this.channel = undefined;
+    this.connection = undefined;
+    await channel?.close().catch(() => undefined);
+    await connection?.close().catch(() => undefined);
   }
 }

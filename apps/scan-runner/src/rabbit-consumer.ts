@@ -66,11 +66,12 @@ export class RabbitJobConsumer {
     this.active += 1;
     let payload: unknown;
     try { payload = JSON.parse(message.content.toString('utf8')) as unknown; }
-    catch { channel.reject(message, false); this.active -= 1; return; }
-    if (!isScanExecuteMessage(payload)) { channel.reject(message, false); this.active -= 1; return; }
+    catch { log('poison delivery rejected', { runnerId: this.options.runnerId, brokerMessageId: message.properties.messageId }); channel.reject(message, false); this.active -= 1; return; }
+    if (!isScanExecuteMessage(payload)) { log('invalid delivery rejected', { runnerId: this.options.runnerId, brokerMessageId: message.properties.messageId }); channel.reject(message, false); this.active -= 1; return; }
 
     const fields = { messageId: payload.messageId, jobId: payload.jobId, apiId: payload.apiId, runnerId: this.options.runnerId, correlationId: payload.correlationId, redelivered: message.fields.redelivered };
     try {
+      log('rabbit delivery received', fields);
       const delivery = await this.api.claimDelivery(payload.jobId, this.options.runnerId, payload.correlationId);
       if (delivery.disposition === 'COMPLETED') { channel.ack(message); log('duplicate delivery acknowledged', fields); return; }
       if (delivery.disposition === 'TERMINAL' || delivery.disposition === 'NOT_FOUND') {
@@ -83,6 +84,7 @@ export class RabbitJobConsumer {
         channel.nack(message, false, true);
         return;
       }
+      log('rabbit job claimed', { ...fields, attempt: delivery.job.attempt });
       await this.processClaimed(channel, message, delivery.job, payload.correlationId, fields);
     } catch (error) {
       log('delivery handling failed', { ...fields, error: error instanceof Error ? error.message : 'Unknown error' });

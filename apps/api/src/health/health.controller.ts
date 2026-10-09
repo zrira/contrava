@@ -8,17 +8,17 @@ export class HealthController {
 
   @Get()
   async health() {
-    const started = performance.now();
-    const [, outboxPending, outboxFailed, rabbitmq] = await Promise.all([
-      this.prisma.$queryRaw`SELECT 1`,
+    const databaseStarted = performance.now();
+    const [databaseLatencyMs, outboxPending, outboxFailed, rabbitmq] = await Promise.all([
+      this.prisma.$queryRaw`SELECT 1`.then(() => Math.round(performance.now() - databaseStarted)),
       this.prisma.outboxMessage.count({ where: { status: 'PENDING' } }),
-      this.prisma.outboxMessage.count({ where: { status: 'FAILED' } }),
+      this.prisma.outboxMessage.count({ where: { status: 'PENDING', lastError: { not: null } } }),
       this.publisher.health(),
     ]);
     return {
       status: rabbitmq.status === 'HEALTHY' ? 'ok' : 'degraded',
       service: 'api',
-      database: { status: 'HEALTHY', latencyMs: Math.round(performance.now() - started) },
+      database: { status: 'HEALTHY', latencyMs: databaseLatencyMs },
       rabbitmq,
       outbox: { pending: outboxPending, failed: outboxFailed },
     };

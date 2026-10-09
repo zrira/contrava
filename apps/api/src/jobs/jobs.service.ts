@@ -52,7 +52,7 @@ export class JobsService {
       this.prisma.scanJob.count({ where: { status: { in: ['CLAIMED', 'RUNNING'] }, leaseExpiresAt: { lt: now } } }),
       this.prisma.scanJob.aggregate({ where: { status: { in: ['PENDING', 'RETRY_SCHEDULED'] } }, _min: { scheduledFor: true } }),
       this.prisma.outboxMessage.count({ where: { status: 'PENDING' } }),
-      this.prisma.outboxMessage.count({ where: { status: 'FAILED' } }),
+      this.prisma.outboxMessage.count({ where: { status: 'PENDING', lastError: { not: null } } }),
       this.prisma.outboxMessage.count({ where: { status: 'PUBLISHED' } }),
       this.prisma.scanJob.count({ where: { deadLetteredAt: { not: null } } }),
     ]);
@@ -95,7 +95,7 @@ export class JobsService {
   }
 
   markDeadLettered(id: string) {
-    return this.prisma.scanJob.updateMany({ where: { id }, data: { deadLetteredAt: new Date() } });
+    return this.prisma.scanJob.updateMany({ where: { id, status: 'FAILED' }, data: { deadLetteredAt: new Date() } });
   }
 
   async start(id: string, claimToken: string, runnerId: string) {
