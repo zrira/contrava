@@ -13,6 +13,7 @@ export class WorkerClientService {
   private readonly specUrl = process.env.SPEC_WORKER_URL ?? 'http://localhost:3001';
   private readonly scanUrl = process.env.SCAN_WORKER_URL ?? 'http://localhost:3002';
   private readonly runnerUrl = process.env.SCAN_RUNNER_URL ?? 'http://localhost:3003';
+  private readonly repoRunnerUrl = process.env.REPO_SCAN_RUNNER_URL ?? 'http://localhost:3004';
 
   async requestWithRetry<T>(url: string, body: unknown, requestId: string, fetchImpl: typeof fetch = fetch): Promise<T> {
     const delays = [250, 500];
@@ -52,5 +53,5 @@ export class WorkerClientService {
     finally { clearTimeout(timer); }
   }
 
-  workerDefinitions() { return [{ name: 'spec-worker', baseUrl: this.specUrl }, { name: 'scan-worker', baseUrl: this.scanUrl }, { name: 'scan-runner', baseUrl: this.runnerUrl }]; }
+  workerDefinitions() { return [{ name: 'spec-worker', baseUrl: this.specUrl }, { name: 'scan-worker', baseUrl: this.scanUrl }, { name: 'scan-runner', baseUrl: this.runnerUrl }, { name: 'repo-scan-runner', baseUrl: this.repoRunnerUrl }]; }
 }

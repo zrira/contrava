@@ -6,6 +6,7 @@ const workspaces = [
   '@contrava/spec-worker',
   '@contrava/scan-worker',
   '@contrava/scan-runner',
+  '@contrava/repo-scan-runner',
 ];
 const command = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const children = workspaces.map((workspace) =>
