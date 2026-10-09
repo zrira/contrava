@@ -14,9 +14,9 @@ Per-API intervals, a NestJS scheduler, persisted scan jobs, a separately runnabl
 
 PostgreSQL is now the primary database. Native UUIDs, JSONB, timestamptz values, and lifecycle enums strengthen the schema. Queue consumers batch claim with `FOR UPDATE SKIP LOCKED`; scheduler rows and snapshot baselines use short row locks; stale owners are checked by runner ID and token. Integration stress tests, query-plan review, pool configuration, pagination, queue metrics, and load tooling are included.
 
-## Phase 4 — queues
+### Phase 4 — RabbitMQ delivery
 
-Replace database polling where appropriate with Redis/BullMQ or RabbitMQ. Study broker acknowledgements, delayed retries, dead-letter queues, idempotent consumers, and at-least-once delivery.
+RabbitMQ now provides push delivery while PostgreSQL remains authoritative. Transactional outbox publication uses publisher confirms; runners use bounded prefetch and manual acknowledgements. Delayed retry queues provide 5/15/60-second stages, terminal/poison messages enter a DLQ, and claim-by-ID plus leases make duplicate and crash recovery idempotent. Broker health, outbox/DLQ metrics, integration tests, and RabbitMQ load tooling are included.
 
 ## Phase 5 — GitHub integration
 
@@ -40,4 +40,4 @@ After the workflow proves useful, add users, organizations, projects, authentica
 
 ## Deliberately deferred
 
-Redis, BullMQ, RabbitMQ, Kafka, Docker, Kubernetes, authentication, payments, service meshes, GraphQL, WebSockets, CQRS, event sourcing, GitHub access, AI, and cloud deployment remain outside Phase 3.
+Redis, BullMQ, Kafka, Docker, Kubernetes, authentication, payments, service meshes, GraphQL, WebSockets, CQRS, event sourcing, GitHub access, AI, and cloud deployment remain outside Phase 4. RabbitMQ is used only for Phase 4 job delivery; PostgreSQL remains the business-state source of truth.

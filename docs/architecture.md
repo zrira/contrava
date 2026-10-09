@@ -3,92 +3,96 @@
 ## System overview
 
 ```mermaid
-flowchart TD
-  Browser[React web :5173] -->|public REST| API[NestJS API :3000]
-  API --> DB[(PostgreSQL)]
-  Scheduler[NestJS scheduler] --> API
-  API --> Queue[(ScanJob table)]
-  Runner[Express scan-runner :3003] -->|internal job REST| API
-  Runner -->|POST /fetch-spec| Spec[Express spec-worker :3001]
-  Runner -->|POST /diff| Diff[Express scan-worker :3002]
+flowchart LR
+  Browser[React web] -->|public REST| API[NestJS API]
+  API -->|business state + outbox| DB[(PostgreSQL)]
+  Publisher[Outbox publisher in API] -->|persistent publish + confirm| MQ[(RabbitMQ)]
+  DB --> Publisher
+  Scheduler[NestJS scheduler] --> DB
+  MQ -->|manual-ack delivery| Runner[scan-runner]
+  Runner -->|claim / heartbeat / result| API
+  Runner --> Spec[spec-worker]
+  Runner --> Diff[scan-worker]
 ```
 
-React provides the dashboard, schedule controls, and job visibility. TanStack Query owns remote state and React Router keeps workflows addressable. NestJS is the control plane and sole owner of PostgreSQL. It validates public and internal HTTP contracts, schedules work, coordinates leases, and transactionally persists scan output. The lightweight Express workers remain independently startable.
+NestJS is the control plane and the sole owner of PostgreSQL. PostgreSQL is authoritative for APIs, schedules, snapshots, changes, scans, job state, leases, and outbox state. RabbitMQ provides push delivery, delayed retry queues, acknowledgements, and dead letters. A message never replaces the `ScanJob` row.
 
-The scan-runner is a separate polling process. It never opens PostgreSQL: claims, heartbeats, results, and failures all pass through explicitly marked `/internal/jobs` endpoints. This keeps database ownership in the API while allowing multiple runner processes.
+The runner and deterministic workers do not open PostgreSQL. The runner consumes RabbitMQ and uses explicitly internal HTTP endpoints to claim a delivered job, manage its lease, and persist its result. The existing PostgreSQL batch-claim endpoint remains available only when `JOB_DELIVERY_MODE=postgres-polling` is selected as a fallback.
 
-Native Node.js APIs remain visible: `fetch` and `AbortController` implement bounded calls, `crypto` creates request/claim IDs, `os.hostname` contributes runner identity, timers drive polling/heartbeats/scheduling, and process signals initiate graceful shutdown.
-
-## Scheduled scan flow
+## Enqueue and delivery
 
 ```mermaid
 sequenceDiagram
-  participant S as NestJS scheduler
-  participant DB as PostgreSQL / ScanJob
+  participant C as Browser / scheduler
+  participant A as NestJS API
+  participant P as PostgreSQL
+  participant O as Outbox publisher
+  participant Q as RabbitMQ
   participant R as scan-runner
-  participant F as spec-worker
-  participant D as scan-worker
-  participant A as NestJS internal API
-  S->>DB: Find due enabled API
-  S->>DB: Transaction: create unique scheduled job + advance nextScanAt
-  R->>A: POST /internal/jobs/claim
-  A->>DB: Batch claim with FOR UPDATE SKIP LOCKED
-  A-->>R: Job, claim token, API, previous snapshot
-  R->>A: POST /internal/jobs/:id/start
-  loop while active
-    R->>A: heartbeat extends lease
-  end
-  R->>F: Fetch and normalize OpenAPI
-  F-->>R: document + deterministic hash
-  opt changed baseline
-    R->>D: Diff previous/current documents
-    D-->>R: classified changes
-  end
-  R->>A: POST /internal/jobs/:id/complete
-  A->>DB: Transaction: idempotent snapshot/changes + complete scan/job
+  C->>A: enqueue scan
+  A->>P: transaction: ScanJob + OutboxMessage
+  A-->>C: accepted job ID
+  O->>P: claim outbox batch (SKIP LOCKED)
+  O->>Q: persistent publish
+  Q-->>O: publisher confirm
+  O->>P: mark outbox PUBLISHED
+  Q->>R: scan.execute delivery
+  R->>A: claim job ID
+  A->>P: lock + issue token/lease
+  A-->>R: job and baseline
+  R->>A: start / heartbeat
+  R->>Spec: fetch and normalize OpenAPI
+  R->>Diff: deterministic diff when changed
+  R->>A: complete
+  A->>P: transaction: result + terminal state
+  A-->>R: committed
+  R->>Q: ACK
 ```
 
-Manual **Scan now** requests enter the same queue and follow the same path. There is no second synchronous implementation.
+The enqueue transaction closes the database/broker dual-write gap. The outbox publisher never holds row locks while talking to RabbitMQ. Publisher confirms prove broker acceptance, but a crash between confirmation and the outbox update can still duplicate delivery; consumers are intentionally idempotent.
 
-## Job state and ownership
+## Job state, retries, and ownership
 
 ```mermaid
 stateDiagram-v2
   [*] --> PENDING
-  PENDING --> CLAIMED: claim / attempt + 1
-  RETRY_SCHEDULED --> CLAIMED: due claim / attempt + 1
+  PENDING --> CLAIMED: delivered and claimed
+  RETRY_SCHEDULED --> CLAIMED: delayed message returns
   CLAIMED --> RUNNING: start
-  RUNNING --> COMPLETED: persist result
-  CLAIMED --> RETRY_SCHEDULED: failure, attempts remain
-  RUNNING --> RETRY_SCHEDULED: failure, attempts remain
-  CLAIMED --> FAILED: failure, max attempts
-  RUNNING --> FAILED: failure, max attempts
-  CLAIMED --> CLAIMED: expired lease reclaimed
-  RUNNING --> CLAIMED: expired lease reclaimed
+  RUNNING --> COMPLETED: result transaction
+  CLAIMED --> RETRY_SCHEDULED: failure + retry outbox
+  RUNNING --> RETRY_SCHEDULED: failure + retry outbox
+  CLAIMED --> FAILED: fourth failed attempt
+  RUNNING --> FAILED: fourth failed attempt
+  CLAIMED --> CLAIMED: expired lease redelivery
+  RUNNING --> CLAIMED: expired lease redelivery
 ```
 
-A claim stores a random token, runner ID, claim time, and lease expiry. A short PostgreSQL transaction selects an ordered batch using `FOR UPDATE SKIP LOCKED` and updates ownership before committing. Competing runners skip locked rows and claim different jobs. Lifecycle calls must present the current token. A heartbeat extends only an unexpired lease. If a runner disappears, another runner can reclaim the job after expiry and receives a new token; stale completion is rejected.
+Claims increment `attempt`, create a random token, record runner identity, and set a lease. Lifecycle calls require the current token and runner ID. Heartbeats extend only active, unexpired leases. A stale runner cannot complete after reclaim.
 
-Claims increment `attempt`. Failures use deterministic durable delays: 5 seconds after attempt one and 15 seconds after attempt two. At `maxAttempts`, the job becomes terminally `FAILED`. Small HTTP retries handle transient transport errors; they do not replace persisted job retries.
+Failures schedule 5-second, 15-second, and 60-second broker stages. The retry state and retry outbox message commit together. The fourth failed attempt is terminal and its delivery is rejected to `contrava.scan.dead`.
 
-The runner requests a batch equal to its free capacity and claims only while `activeJobs < MAX_CONCURRENT_JOBS`. It does not preload an in-memory queue, so `ScanJob` remains the source of truth and provides basic backpressure. Multiple runner processes can share that source safely.
+## Idempotency and ordering
 
-## Scheduling and duplicate prevention
+The message envelope contains IDs only. On every delivery, the API locks and inspects the durable job:
 
-Enabling a schedule sets `nextScanAt` to now. Every scheduler tick reads a bounded set of due APIs. For each, a transaction locks and rechecks the due API row, creates a job with a unique key made from API ID and scheduling slot, and advances the exact due timestamp. Concurrent/repeated ticks therefore cannot create the same slot twice. Missed intervals are skipped rather than producing an unbounded catch-up burst.
+- `COMPLETED` is a safe duplicate and is ACKed without execution;
+- an unexpired active job is busy, so delivery is held briefly and requeued;
+- an expired active job is reclaimed with a new token;
+- terminal/missing work is rejected to the DLQ.
 
-## Idempotency and failure recovery
+`(apiId, contentHash)` prevents duplicate snapshots. Completion accepts repeat calls for an already completed job. A per-API row lock serializes snapshot baseline movement without blocking unrelated APIs. Scheduler row locks plus unique `scheduleKey` values prevent duplicate schedule slots.
 
-`(apiId, contentHash)` remains unique. Completion first checks for an existing hash, so repeated completion cannot duplicate a snapshot. A completed job accepts duplicate completion calls as success. Snapshot, changes, scan status, API status, and job completion are written transactionally. The completion also verifies the runner's previous snapshot baseline; concurrent baseline movement causes a retry instead of applying a stale diff.
+## Backpressure and shutdown
 
-On graceful runner shutdown, new claims stop, active jobs receive a configurable grace period, and heartbeats continue while those jobs finish. If the process is killed or grace expires, unfinished jobs retain their leases; another runner recovers them after expiry.
+RabbitMQ prefetch is normally equal to runner concurrency, so a runner does not reserve more messages than it can process. During graceful shutdown it cancels consumption, waits up to the configured grace period for active jobs, then closes the channel; any remaining unacknowledged messages return to RabbitMQ. Leases protect application ownership across those redeliveries.
 
-## Why this is not a full message queue
+## Persistence and transport boundaries
 
-PostgreSQL supplies durable rows, row locks, and transactions, but there is no broker push delivery, acknowledgement protocol, routing, partitioning, dead-letter queue, or high-throughput concurrent writer design. Polling adds latency and database load. This implementation is intentionally useful for learning: leases, ownership, retries, idempotency, backpressure, and crash recovery are explicit and inspectable.
+- **PostgreSQL:** authoritative business state, idempotency, leases, attempts, and outbox.
+- **RabbitMQ:** at-least-once notification delivery, delayed routing, acknowledgements, and DLQ.
+- **NestJS API:** only database client; publisher confirms and internal lifecycle validation.
+- **scan-runner:** broker consumer and HTTP orchestrator; no direct database access.
+- **spec/scan workers:** deterministic bounded HTTP computation; no queue or database access.
 
-A future Redis/BullMQ or RabbitMQ phase would replace job polling, broker delivery, acknowledgements, retry timing, and dead-letter handling. NestJS would still own product state and idempotent result persistence; deterministic OpenAPI workers would remain separate.
-
-## Persistence boundaries
-
-The NestJS API owns `TrackedApi`, `ApiSnapshot`, `ApiChange`, `Scan`, `ScanJob`, and `Worker` data in PostgreSQL. Workers and runners do not share the database. PostgreSQL permits concurrent consumers while API-row locking preserves each contract's snapshot order. See [PostgreSQL concurrency](postgres-concurrency.md) and [performance](performance.md) for the detailed model.
+See [RabbitMQ delivery](rabbitmq-delivery.md), [PostgreSQL concurrency](postgres-concurrency.md), and [performance](performance.md).

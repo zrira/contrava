@@ -12,13 +12,14 @@ Contrava monitors OpenAPI contracts and reports breaking changes before they sur
 | `@contrava/api` | 3000 | NestJS control plane, scheduler, job API, and persistence |
 | `@contrava/spec-worker` | 3001 | Fetch, parse, normalize, and hash OpenAPI documents |
 | `@contrava/scan-worker` | 3002 | Deterministic OpenAPI contract diffing |
-| `@contrava/scan-runner` | 3003 | Poll, lease, heartbeat, and execute persisted jobs |
+| `@contrava/scan-runner` | 3003 | Consume, lease, heartbeat, and execute RabbitMQ-delivered jobs |
 
 ## Prerequisites
 
 - Node.js 20 or newer
 - npm 10 or newer
 - PostgreSQL 14 or newer (tested locally with PostgreSQL 18)
+- RabbitMQ 3.12 or newer (tested locally with RabbitMQ 4)
 
 ## Local PostgreSQL setup
 
@@ -30,7 +31,7 @@ createdb --owner=contrava contrava
 createdb --owner=contrava contrava_test
 ```
 
-If the role or databases already exist, reuse them rather than recreating them. Then initialize Contrava:
+If the role or databases already exist, reuse them rather than recreating them. Create or obtain a local RabbitMQ account/vhost and set `RABBITMQ_URL`. The localhost examples use RabbitMQ's development-only `guest` account. Then initialize Contrava:
 
 ```bash
 npm install
@@ -61,7 +62,7 @@ Prisma loads `apps/api/.env`. Runtime services use the documented localhost defa
 3. Watch the persisted job move through `/jobs`; the runner creates the baseline snapshot.
 4. Change the document and queue another scan to see classified changes.
 
-Workers and the runner intentionally do not access PostgreSQL. The runner uses the API's internal job protocol. To test recovery locally, stop a runner during a job and start another after `JOB_LEASE_MS`; to test retries, set `RUNNER_FAILURE_RATE=1` temporarily.
+Workers and the runner intentionally do not access PostgreSQL. Enqueue commits a job and outbox message together; the API publishes with confirms, and the runner manually acknowledges RabbitMQ only after the API commits a durable outcome. To test recovery locally, stop a runner during a job and start another after `JOB_LEASE_MS`; to test all retry stages and the DLQ, set `RUNNER_FAILURE_RATE=1` temporarily.
 
 ## Useful commands
 
@@ -75,20 +76,24 @@ npm run format:check
 # Destructively resets only a database whose name contains "test"
 TEST_DATABASE_URL=postgresql://contrava:contrava@localhost:5432/contrava_test npm run test:postgres
 
-# API must be running; creates and synthetically processes jobs
-npm run load:jobs -- --jobs=1000 --runners=4
+# Requires an isolated test DB and reachable RabbitMQ; test topology is prefixed
+TEST_DATABASE_URL=postgresql://contrava:contrava@localhost:5432/contrava_test \\
+RABBITMQ_URL=amqp://guest:guest@localhost:5672 npm run test:rabbitmq
+
+# API and RabbitMQ must be running; synthetic consumers use real broker delivery
+npm run load:rabbitmq -- --jobs=1000 --runners=4 --apis=10
 ```
 
 The API includes `/health`, CRUD and schedules under `/apis`, asynchronous `/apis/:id/scan`, `/jobs`, snapshot/change history, `/scans`, aggregate `/workers` health, and explicitly internal `/internal/jobs/*` runner endpoints.
 
 ## PostgreSQL operations
 
-Prisma manages a connection pool per API process. Configure `connection_limit` and `pool_timeout` in `DATABASE_URL`; account for every API replica when budgeting PostgreSQL sessions. PgBouncer is deliberately deferred. `/health` reports database connectivity and latency.
+Prisma manages a connection pool per API process. Configure `connection_limit` and `pool_timeout` in `DATABASE_URL`; account for every API replica when budgeting PostgreSQL sessions. PgBouncer is deliberately deferred. `/health` reports database and RabbitMQ connectivity, broker latency, DLQ depth, and outbox backlog.
 
 Completed-job retention is currently policy-only: `JOB_RETENTION_DAYS=30` documents the intended horizon, but Phase 3 does not automatically delete history. Job history is paginated with `GET /jobs?page=1&pageSize=25&status=FAILED`.
 
-See [PostgreSQL concurrency](docs/postgres-concurrency.md), [performance](docs/performance.md), and [architecture](docs/architecture.md).
+See [RabbitMQ delivery](docs/rabbitmq-delivery.md), [PostgreSQL concurrency](docs/postgres-concurrency.md), [performance](docs/performance.md), and [architecture](docs/architecture.md).
 
 ## Current limitations
 
-The queue still uses database polling rather than a message broker. Internal runner endpoints are intentionally unauthenticated. Scheduling supports fixed intervals rather than cron, automated retention is not enabled, and OpenAPI `$ref` handling is limited to local document references.
+RabbitMQ delivery and internal runner endpoints are intentionally unauthenticated in this learning system. `JOB_DELIVERY_MODE=postgres-polling` remains an explicit Phase 3 fallback, not the default. Scheduling supports fixed intervals rather than cron, automated retention is not enabled, and OpenAPI `$ref` handling is limited to local document references.
