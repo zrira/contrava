@@ -1,7 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { connect, type ChannelModel, type ConfirmChannel } from 'amqplib';
 import { declareTopology, topologyFromEnv } from '@contrava/rabbitmq';
-import type { ScanExecuteMessage } from '@contrava/shared';
 import { OutboxRepository } from './outbox.repository';
 
 @Injectable()
@@ -47,12 +46,12 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     const started = performance.now();
     try {
       for (const message of messages) {
-        const payload = message.payload as unknown as ScanExecuteMessage;
+        const payload = message.payload as unknown as { correlationId?: string };
         channel.publish(message.topic, message.routingKey, Buffer.from(JSON.stringify(payload)), {
           persistent: true,
           contentType: 'application/json',
           messageId: message.id,
-          correlationId: payload.correlationId,
+          ...(payload.correlationId ? { correlationId: payload.correlationId } : {}),
           timestamp: Date.now(),
         });
       }
@@ -95,8 +94,8 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     const started = performance.now();
     try {
       const channel = await this.ensureChannel();
-      const queue = await channel.checkQueue(this.topology.deadLetterQueue);
-      return { status: 'HEALTHY' as const, latencyMs: Math.round(performance.now() - started), dlqDepth: queue.messageCount };
+      const [queue, repositoryQueue, repositoryDlq] = await Promise.all([channel.checkQueue(this.topology.deadLetterQueue), channel.checkQueue(this.topology.repositoryScanQueue), channel.checkQueue(this.topology.repositoryDeadLetterQueue)]);
+      return { status: 'HEALTHY' as const, latencyMs: Math.round(performance.now() - started), dlqDepth: queue.messageCount, repositoryQueueDepth: repositoryQueue.messageCount, repositoryDlqDepth: repositoryDlq.messageCount };
     } catch (error) {
       this.clearConnection();
       return { status: 'UNAVAILABLE' as const, error: error instanceof Error ? error.message : 'Connection failed', dlqDepth: null };

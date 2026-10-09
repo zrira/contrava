@@ -98,6 +98,82 @@ export function isScanExecuteMessage(value: unknown): value is ScanExecuteMessag
     && typeof candidate.createdAt === 'string' && !Number.isNaN(Date.parse(candidate.createdAt));
 }
 
+export interface RepositoryScanMessage {
+  version: 1;
+  messageId: string;
+  repositoryScanId: string;
+  repositoryId: string;
+  commitSha: string | null;
+  correlationId: string;
+  createdAt: string;
+}
+
+export function isRepositoryScanMessage(value: unknown): value is RepositoryScanMessage {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return candidate.version === 1
+    && typeof candidate.messageId === 'string' && uuid.test(candidate.messageId)
+    && typeof candidate.repositoryScanId === 'string' && uuid.test(candidate.repositoryScanId)
+    && typeof candidate.repositoryId === 'string' && uuid.test(candidate.repositoryId)
+    && (candidate.commitSha === null || (typeof candidate.commitSha === 'string' && /^[0-9a-f]{40}$/i.test(candidate.commitSha)))
+    && typeof candidate.correlationId === 'string' && candidate.correlationId !== ''
+    && typeof candidate.createdAt === 'string' && !Number.isNaN(Date.parse(candidate.createdAt));
+}
+
+export interface RepositoryScanClaim {
+  scanId: string;
+  repositoryId: string;
+  owner: string;
+  name: string;
+  branch: string | null;
+  commitSha: string | null;
+  previousCommitSha: string | null;
+  attempt: number;
+  maxAttempts: number;
+  claimToken: string;
+  runnerId: string;
+  leaseExpiresAt: string;
+}
+
+export type RepositoryScanDisposition =
+  | { disposition: 'CLAIMED'; scan: RepositoryScanClaim }
+  | { disposition: 'COMPLETED' }
+  | { disposition: 'BUSY'; retryAfterMs: number }
+  | { disposition: 'TERMINAL' }
+  | { disposition: 'NOT_FOUND' };
+
+export interface IndexedUsageCandidate {
+  httpMethod: string | null;
+  endpointPattern: string;
+  line: number;
+  column: number | null;
+  snippet: string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  matchType: 'STATIC_LITERAL' | 'TEMPLATE_LITERAL' | 'STRING_CONCATENATION' | 'HTTP_CLIENT_CALL' | 'BASE_URL_JOIN' | 'WRAPPER_CALL' | 'UNKNOWN';
+  evidence: Record<string, string>;
+}
+
+export interface IndexedSourceFile {
+  path: string;
+  language: string;
+  contentHash: string;
+  usages: IndexedUsageCandidate[];
+}
+
+export interface CompleteRepositoryScanRequest {
+  claimToken: string;
+  runnerId: string;
+  commitSha: string;
+  defaultBranch: string;
+  externalRepositoryId: string;
+  fullScan: boolean;
+  files: IndexedSourceFile[];
+  deletedPaths: string[];
+  indexedPaths: string[];
+  filesSkipped: number;
+}
+
 export interface ClaimedJob {
   id: string;
   apiId: string;

@@ -18,6 +18,7 @@ export class OutboxRepository {
           SELECT "id"
           FROM "OutboxMessage"
           WHERE "status" = 'PENDING'::"OutboxStatus"
+            AND "availableAt" <= ${now}
             AND ("lockedAt" IS NULL OR "lockedAt" < ${staleBefore})
           ORDER BY "createdAt" ASC
           FOR UPDATE SKIP LOCKED
